@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+    postgres:
+        image: postgres:16-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-news}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-news}
+            POSTGRES_DB: ${POSTGRES_DB:-news}
+        ports:
+            - '5432:5432'
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-news}']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    nats:
+        image: nats:2.10-alpine
+        restart: unless-stopped
+        command: ['-js', '-m', '8222']
+        ports:
+            - '4222:4222'
+            - '8222:8222'
+        volumes:
+            - nats_data:/data
+        healthcheck:
+            test: ['CMD', 'wget', '-qO-', 'http://localhost:8222/healthz']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    backend:
+        build:
+            context: ./corpo-news
+            dockerfile: Dockerfile
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+            nats:
+                condition: service_healthy
+        environment:
+            DATABASE_URL: postgresql://${POSTGRES_USER:-news}:${POSTGRES_PASSWORD:-news}@postgres:5432/${POSTGRES_DB:-news}
+            NATS_URL: nats://nats:4222
+            ML_SERVICE_URL: http://ml-service:8000
+            PORT: 3000
+        ports:
+            - '3000:3000'
+        command: sh -c "npx prisma migrate deploy && node dist/main.js"
+
+    # ml-service:
+    #     build:
+    #         context: ./ml-service
+    #         dockerfile: Dockerfile
+    #     restart: unless-stopped
+    #     depends_on:
+    #         nats:
+    #             condition: service_healthy
+    #         postgres:
+    #             condition: service_healthy
+    #     environment:
+    #         NATS_URL: nats://nats:4222
+    #         DATABASE_URL: postgresql://${POSTGRES_USER:-news}:${POSTGRES_PASSWORD:-news}@postgres:5432/${POSTGRES_DB:-news}
+    #         OPENAI_API_KEY: ${OPENAI_API_KEY}
+    #     ports:
+    #         - '8000:8000'
+    #     command: python -m app.consumer
+
+volumes:
+    postgres_data:
+    nats_data:
