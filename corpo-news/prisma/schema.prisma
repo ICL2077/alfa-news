@@ -13,8 +13,7 @@ datasource db {
   provider = "postgresql"
 }
 
-
-// 1. Сырые новости из RSS (общий поток)
+// Сырые новости из RSS (общий поток, идет в фоне)
 model RawArticle {
   id          String   @id @default(uuid())
   guid        String   @unique 
@@ -37,17 +36,19 @@ model RawArticle {
   @@map("raw_articles")
 }
 
-// 2. Профиль компании (из DaData + LLM)
 model Company {
   id            String   @id @default(uuid())
-  inn           String   @unique
-  name          String
-  okved         String?
-  region        String?
-  keywords      String[] // ключевые слова, сгенерированные LLM
-  profileJson   Json?    // полный профиль: поставщики, конкуренты, риски
+  inn           String?  @unique // опционально - мб через Dadata поддягивать
+  name          String   // будет вводится на сайте пользователем
+  description   String?  // будет вводится на сайте пользователем, может помочь LLm получше обогатить инфой "профиль" компании
+  okved         String?  // Из dadata
+  region        String?  // Из dadata
+  keywords      String[] @default([])// Это будет заполнятся LLM-кой
+  profileJson   Json?    // полный профиль: поставщики, конкуренты, риски (будет заполнятся LLm)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  status        ProfileStatus @default(DRAFT) // статус профиля (пока LLm не соберет всю нужную инфу о компании профиль будет значится как DRAFT)
 
   // Связь с отфильтрованными новостями
   matches       ArticleMatch[]
@@ -55,21 +56,26 @@ model Company {
   @@map("companies")
 }
 
-// 3. Связь «новость ↔ компания» с результатом скоринга
+// Новости которые подошли компании с результатом скоринга(по важности)
 model ArticleMatch {
   id            String   @id @default(uuid())
   rawArticle    RawArticle @relation(fields: [rawArticleId], references: [id], onDelete: Cascade)
   rawArticleId  String
   company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   companyId     String
+  category     String?
   score         Float    // оценка важности 0-1 или 1-10
   summary       String?  @db.Text // саммари от LLM
   explanation   String?  @db.Text // почему это важно для компании
-  isRelevant    Boolean  @default(false)
   createdAt     DateTime @default(now())
 
   // Одна новость может быть релевантна для нескольких компаний, но для одной — только один раз
   @@unique([rawArticleId, companyId])
   @@index([companyId, score])
   @@map("article_matches")
+}
+
+enum ProfileStatus {
+  DRAFT
+  READY
 }

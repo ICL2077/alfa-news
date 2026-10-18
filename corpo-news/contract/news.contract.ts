@@ -3,61 +3,61 @@
 // ============================================================
 
 export const newsStream = {
-    name: 'NEWS',
-    subjects: {
-        coreSubject: ['news.>'],
-        /** Python читает сырые новости */
-        mlConsumerSubject: 'news.raw.>',
-        /** NestJS читает результаты обработки */
-        nestConsumerSubject: 'news.processed.>',
-    },
-    consumers: {
-        nestNewsConsumer: 'news_processed',
-        mlNewsConsumer: 'news_raw',
-    },
+  name: 'NEWS',
+  subjects: {
+    core: ['news.>'],
+  },
+  filters: {
+    mlConsumer: 'news.raw.>',
+    nestConsumer: 'news.processed.>',
+  },
+  consumers: {
+    nestNewsConsumer: 'news_processed',
+    mlNewsConsumer: 'news_raw',
+  },
 };
 
 export const subjectForRawNews = (articleId: string) => `news.raw.${articleId}`;
-export const subjectForProcessedNews = (articleId: string) => `news.processed.${articleId}`;
+export const subjectForProcessedNews = (companyId: string, articleId: string) =>
+  `news.processed.${companyId}.${articleId}`;
 
 // ============================================================
 // Events
 // ============================================================
 
 export interface NewsRawEvent {
-    id: string;
-    /** Уникальный идентификатор новости из RSS */
-    guid: string;
-    title: string;
-    description: string | null;
-    fullText: string | null;
-    link: string;
-    category: string | null;
-    /** ISO, UTC */
-    pubDate: string;
-    /** ISO, UTC */
-    publishedAt: string;
+  id: string;
+  /** Уникальный идентификатор новости из RSS */
+  guid: string;
+  title: string;
+  description: string | null;
+  fullText: string | null;
+  link: string;
+  category: string | null;
+  /** ISO, UTC */
+  pubDate: string;
+  /** ISO, UTC */
+  publishedAt: string;
 }
 
 export interface NewsProcessedEvent {
-    articleId: string;
-    guid: string;
-    companyId: string;
-    isRelevant: boolean;
-    score: number;
-    summary: string;
-    explanation: string;
-    model?: string;
-    /** ISO, UTC */
-    processedAt: string;
+  articleId: string;
+  companyId: string;
+  score: number;
+  summary: string;
+  explanation: string;
+  category?: string;
+  model?: string;
+  /** ISO, UTC */
+  processedAt: string;
 }
 
 export interface NewsFailedEvent {
-    articleId: string;
-    guid: string;
-    companyId: string | null;
-    reason: string;
-    attempt: number;
-    /** ISO, UTC */
-    failedAt: string;
+  articleId: string;
+  guid: string;
+  companyId: string | null;
+  reason: string;
+  attempt: number;
+  /** ISO, UTC */
+  failedAt: string;
 }

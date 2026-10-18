@@ -1,16 +1,8 @@
-# contracts/news_contract.py
-#
-# Контракт обмена сообщениями между NestJS (publisher/consumer)
-# и Python ML-сервисом (consumer/publisher).
-#
-# Зеркало contracts/news.contract.ts.
-# Любые изменения синхронизировать с TypeScript-версией.
-
+# Зеркало contract/news.contract.ts. Менять только вместе с TypeScript-версией.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, ConfigDict, Field
 
 # ============================================================
 # NATS: stream, subjects, consumer names
@@ -19,73 +11,73 @@ from pydantic import BaseModel, Field
 NEWS_STREAM = "NEWS"
 
 
-class NewsSubjects:
-    """Имена subject'ов в NATS JetStream."""
-    RAW = "news.raw"              # NestJS → Python
-    PROCESSED = "news.processed"  # Python → NestJS
-    FAILED = "news.failed"        # Python → NestJS
-
-
 class NewsConsumers:
-    """Durable consumer names."""
-    ML_WORKER = "ml-worker"                  # Python читает news.raw
-    BACKEND_PROCESSED = "backend-processed"  # NestJS читает news.processed и news.failed
+    """Durable-консьюмеры. Создаёт Nest (NatsBootstrapService), Python только подключается."""
+
+    ML_RAW = "news_raw"                # Python читает news.raw.>
+    NEST_PROCESSED = "news_processed"  # Nest читает news.processed.>
+
+
+class NewsFilters:
+    RAW = "news.raw.>"
+    PROCESSED = "news.processed.>"
+
+
+def subject_for_raw_news(article_id: str) -> str:
+    return f"news.raw.{article_id}"
+
+
+def subject_for_processed_news(company_id: str, article_id: str) -> str:
+    # companyId обязателен в subject: иначе результаты для разных компаний
+    # по одной новости считались бы дубликатами
+    return f"news.processed.{company_id}.{article_id}"
 
 
 # ============================================================
 # Events
 # ============================================================
 
-class NewsRawEvent(BaseModel):
-    """
-    Событие "сырая новость" — приходит из NestJS (subject: news.raw).
+class _Event(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    JSON использует camelCase, Python-поля — snake_case.
-    populate_by_name=True позволяет принимать оба варианта.
-    """
+
+class NewsRawEvent(_Event):
+    """Сырая новость. NestJS -> Python (news.raw.<articleId>)."""
+
     id: str
     guid: str
     title: str
     description: Optional[str] = None
     full_text: Optional[str] = Field(None, alias="fullText")
     link: str
-    source: str
     category: Optional[str] = None
     pub_date: datetime = Field(..., alias="pubDate")
     published_at: datetime = Field(..., alias="publishedAt")
 
-    class Config:
-        populate_by_name = True
 
+class NewsProcessedEvent(_Event):
+    """
+    Новость подошла компании. Python -> NestJS (news.processed.<companyId>.<articleId>).
+    Событие шлётся ТОЛЬКО для совпадений: наличие записи в ArticleMatch означает релевантность.
+    Nest-контракт требует articleId = RawArticle.id.
+    """
 
-class NewsProcessedEvent(BaseModel):
-    """
-    Результат обработки новости — уходит в NestJS (subject: news.processed).
-    """
     article_id: str = Field(..., alias="articleId")
-    guid: str
     company_id: str = Field(..., alias="companyId")
-    is_relevant: bool = Field(..., alias="isRelevant")
-    score: float
+    score: float  # 0..1
     summary: str
     explanation: str
+    category: Optional[str] = None
     model: Optional[str] = None
     processed_at: datetime = Field(..., alias="processedAt")
 
-    class Config:
-        populate_by_name = True
 
+class NewsFailedEvent(_Event):
+    """Ошибка обработки. Python -> NestJS. В Nest пока нет subject и консьюмера, на будущее."""
 
-class NewsFailedEvent(BaseModel):
-    """
-    Событие ошибки обработки — уходит в NestJS (subject: news.failed).
-    """
     article_id: str = Field(..., alias="articleId")
     guid: str
     company_id: Optional[str] = Field(None, alias="companyId")
     reason: str
     attempt: int
     failed_at: datetime = Field(..., alias="failedAt")
-
-    class Config:
-        populate_by_name = True
