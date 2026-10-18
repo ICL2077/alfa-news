@@ -10,7 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
-export class NewsDispatcherService implements OnApplicationBootstrap {
+export class NewsDispatcherService {
   private logger = new Logger(NewsDispatcherService.name);
 
   private isRunning: boolean = false;
@@ -20,29 +20,6 @@ export class NewsDispatcherService implements OnApplicationBootstrap {
     private JSService: NatsJetStreamService,
     private prisma: PrismaService,
   ) {}
-
-  async onApplicationBootstrap() {
-    try {
-      await this.JSService.ensureMessagesStream(
-        newsStream.name,
-        newsStream.subjects.coreSubject,
-      );
-
-      await this.JSService.ensureMessagesConsumer(
-        newsStream.name,
-        newsStream.consumers.nestNewsConsumer, // nest консьюмер
-        newsStream.subjects.nestConsumerSubject,
-      );
-
-      await this.JSService.ensureMessagesConsumer(
-        newsStream.name,
-        newsStream.consumers.mlNewsConsumer, // python консьюмер
-        newsStream.subjects.mlConsumerSubject,
-      );
-    } catch (error) {
-      this.logger.error(`Nats bootstrap failed: ${error.message}`);
-    }
-  }
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async processNews() {
