@@ -10,6 +10,12 @@ from contract.news_contract import (
     NewsRawEvent,
     subject_for_processed_news,
 )
+from openai import (
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 
 from .scoring import score_news
 
@@ -20,6 +26,8 @@ from .registry import registry
 import nats
 from nats.errors import TimeoutError as NatsTimeout
 from pydantic import ValidationError
+
+_FATAL = (AuthenticationError, NotFoundError, PermissionDeniedError, BadRequestError)
 
 from contract.company_contract import (
     COMPANY_STREAM,
@@ -110,33 +118,52 @@ async def handle_news(js, msg) -> None:
         return
 
     companies = registry.all()
-    published = 0
 
-    for company in companies:
-        match = score_news(news, company)
-        if match is None:
+    # пока идут вызовы LLM, продлеваем ожидание подтверждения
+    hb = asyncio.create_task(keepalive(msg))
+    try:
+        results = await asyncio.gather(
+            *(score_news(news, c) for c in companies), return_exceptions=True
+        )
+    finally:
+        hb.cancel()
+
+    published = 0
+    failed = 0
+    for company, res in zip(companies, results):
+        if isinstance(res, _FATAL):
+            raise res
+        if isinstance(res, Exception):
+            failed += 1
+            log.error("scoring %s x %s failed: %r", news.id[:8], company.name, res)
+            continue
+        if res is None:
             continue
 
         out = NewsProcessedEvent(
             article_id=news.id,
             company_id=company.company_id,
-            score=match.score,
-            summary=match.summary,
-            explanation=match.explanation,
-            model="stub",
+            score=res.score,
+            summary=res.summary,
+            explanation=res.explanation,
+            category=res.category,
+            model=res.model,
             processed_at=datetime.now(timezone.utc),
         )
         await js.publish(
             subject_for_processed_news(company.company_id, news.id),
             out.model_dump_json(by_alias=True).encode(),
-            # один результат на пару новость x компания
             headers={"Nats-Msg-Id": f"{news.id}:{company.company_id}"},
         )
         published += 1
 
+    if failed:
+        # не подтверждаем: сообщение вернётся. Повторные публикации безопасны,
+        # потому что Nest делает upsert по паре (новость, компания)
+        raise RuntimeError(f"{failed} scoring calls failed")
+
     await msg.ack()
     log.info("news %s: companies=%d matched=%d", news.id[:8], len(companies), published)
-
 
 async def news_loop(js) -> None:
     psub = await js.pull_subscribe(
@@ -146,16 +173,18 @@ async def news_loop(js) -> None:
 
     while True:
         try:
-            msgs = await psub.fetch(batch=10, timeout=5)
+            msgs = await psub.fetch(batch=5, timeout=5)
         except NatsTimeout:
             continue
         for msg in msgs:
             try:
                 await handle_news(js, msg)
+            except _FATAL as e:
+                log.error("news fatal, message dropped: %s: %s", type(e).__name__, e)
+                await msg.term()
             except Exception:
                 log.exception("news failed, will retry in 30s")
                 await msg.nak(delay=30)
-
 
 async def ready_subscribe(js):
     async def on_ready(msg) -> None:
