@@ -1,3 +1,5 @@
 nats-py
 pydantic>=2
 pydantic-settings
+openai
+tenacity
