@@ -48,6 +48,8 @@ export interface NewsProcessedEvent {
   explanation: string;
   category?: string;
   model?: string;
+  impact?: string | null;
+  horizon?: string | null;
   /** ISO, UTC */
   processedAt: string;
 }

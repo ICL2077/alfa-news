@@ -70,6 +70,8 @@ class NewsProcessedEvent(_Event):
     category: Optional[str] = None
     model: Optional[str] = None
     processed_at: datetime = Field(..., alias="processedAt")
+    impact: Optional[str] = None
+    horizon: Optional[str] = None
 
 
 class NewsFailedEvent(_Event):

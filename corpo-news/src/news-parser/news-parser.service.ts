@@ -3,34 +3,59 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import axios from 'axios';
 
 import { XMLParser } from 'fast-xml-parser';
+import { NewsRawEvent } from 'contract/news.contract';
+import { OutboxService } from 'src/outbox/outbox.service';
 
 const API_RSS_URL = 'https://rssexport.rbc.ru/rbcnews/news/30/full.rss';
 
 @Injectable()
 export class NewsParserService {
-  private readonly parser = new XMLParser({
+  private parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
     cdataPropName: '__cdata',
     trimValues: true,
   });
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private outbox: OutboxService,
+  ) {}
 
   async fetchAndStore() {
     const xml = await this.fetchXml(API_RSS_URL);
     const articles = this.parseRbcXml(xml);
 
     if (articles.length === 0) {
-      return { saved: [] };
+      return [];
     }
 
-    const res = await this.prisma.rawArticle.createMany({
-      data: articles,
-      skipDuplicates: true,
-    });
+    return await this.prisma.$transaction(async (trans) => {
+      const res = await trans.rawArticle.createManyAndReturn({
+        data: articles,
+        skipDuplicates: true,
+      });
 
-    return res.count;
+      const publishedAt = new Date().toISOString();
+
+      for (const article of res) {
+        const event: NewsRawEvent = {
+          id: article.id,
+          guid: article.guid,
+          title: article.title,
+          description: article.description,
+          fullText: article.fullText,
+          link: article.link,
+          category: article.category,
+          pubDate: article.pubDate.toISOString(),
+          publishedAt: publishedAt,
+        };
+
+        await this.outbox.enqueue(trans, 'news.raw', event);
+      }
+
+      return res;
+    });
   }
 
   private async fetchXml(url: string): Promise<string> {
@@ -45,6 +70,7 @@ export class NewsParserService {
       if (axios.isAxiosError(error)) {
         throw new Error(
           `fetch failed: status=${error.response?.status} code=${error.code} msg=${error.message}`,
+          { cause: error },
         );
       }
       throw error;
@@ -82,9 +108,9 @@ export class NewsParserService {
       guid,
       title,
       link,
-      description: this.extractText(item.description) ?? null,
-      fullText: this.extractText(item['rbc_news:full-text']) ?? null,
-      category: this.extractText(item.category) ?? null,
+      description: this.extractText(item.description) || null,
+      fullText: this.extractText(item['rbc_news:full-text']) || null,
+      category: this.extractText(item.category) || null,
       pubDate: date,
     };
   }

@@ -7,6 +7,13 @@ from contract.company_contract import CompanyEnrichEvent
 from .llm import ask_json
 from .settings import settings
 
+from .topics import MACRO_TOPICS
+
+
+class Sensitivity(BaseModel):
+    topic: str
+    mechanism: str = ""
+
 
 class EnrichResult(BaseModel):
     summary: str = ""
@@ -18,6 +25,9 @@ class EnrichResult(BaseModel):
     competitors: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    financing: str = ""
+    fx_exposure: str = ""
+    sensitivities: list[Sensitivity] = Field(default_factory=list)
 
 
 PROMPT = """Ты аналитик, который готовит профиль российской компании для системы
@@ -56,6 +66,21 @@ PROMPT = """Ты аналитик, который готовит профиль 
   слова-роли ("конкуренты", "поставщики", "клиенты", "риски") как часть ключевого слова.
 """
 
+_EXTRA = """
+Дополнительно верни поля:
+- financing: как компания финансирует деятельность и инвестиции (кредиты, займы, лизинг,
+  доля заёмных средств). ТОЛЬКО если это сказано в описании, иначе пустая строка;
+- fx_exposure: валютная выручка, импорт, экспорт, валютные обязательства. ТОЛЬКО по
+  описанию, иначе пустая строка;
+- sensitivities: до 6 объектов {"topic": ..., "mechanism": ...}. topic строго из списка:
+  __TOPICS__. mechanism: одно предложение, как эта тема влияет именно на этого клиента
+  и на чём это основано (на фактах из описания или на очевидной логике отрасли).
+  Не добавляй тему, если связи нет.
+Не выдумывай, что у компании есть кредиты, валютные операции и другие обстоятельства,
+которых нет в описании.
+"""
+PROMPT = PROMPT + _EXTRA.replace("__TOPICS__", ", ".join(MACRO_TOPICS))
+
 
 def _clean(items: list[str], limit: int) -> list[str]:
     seen: set[str] = set()
@@ -80,12 +105,14 @@ def _stub(event: CompanyEnrichEvent) -> EnrichResult:
         regions=[event.region] if event.region else [],
     )
 
+
 _ROLE_WORDS = ("конкурент", "поставщик", "клиент", "риск")
 
 
 def _clean_keywords(items: list[str], limit: int) -> list[str]:
     cleaned = _clean(items, limit * 2)
     return [k for k in cleaned if not any(w in k.lower() for w in _ROLE_WORDS)][:limit]
+
 
 async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
     """Возвращает (keywords, profile_json). profile_json это объект, а не строка."""
@@ -107,6 +134,15 @@ async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
         # пустой профиль бесполезен: пусть сообщение вернётся (nak) и попробует снова
         raise ValueError("LLM returned no keywords")
 
+    seen: set[str] = set()
+    sens: list[dict] = []
+
+    for s in result.sensitivities:
+        mech = " ".join(s.mechanism.split())
+        if s.topic in MACRO_TOPICS and mech and s.topic not in seen:
+            seen.add(s.topic)
+            sens.append({"topic": s.topic, "mechanism": mech})
+
     profile = {
         "summary": result.summary.strip(),
         "industry": result.industry.strip(),
@@ -116,5 +152,8 @@ async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
         "competitors": _clean(result.competitors, 8),
         "regions": _clean(result.regions, 8),
         "risks": _clean(result.risks, 8),
+        "financing": result.financing.strip(),
+        "fx_exposure": result.fx_exposure.strip(),
+        "sensitivities": sens[:6],
     }
     return keywords, profile
