@@ -9,8 +9,6 @@ from .scoring import score_news
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logging.getLogger("scoring").setLevel(logging.DEBUG)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
 
 NOW = datetime.now(timezone.utc)
 
@@ -29,6 +27,24 @@ COMPANY = CompanyReadyEvent(
     updated_at=NOW,
 )
 
+COMPANY_CREDIT = CompanyReadyEvent(
+    company_id="t2",
+    name="СтройИнвест",
+    description="Девелопер жилья. Строительство финансируем проектными кредитами банков, "
+                "около половины инвестиций за счёт заёмных средств. Часть покупателей берёт ипотеку.",
+    keywords=["ипотека", "жилищное строительство", "проектное финансирование", "кредиты застройщиков"],
+    profile_json={
+        "industry": "Жилищное строительство",
+        "financing": "проектные кредиты банков, около половины инвестиций за счёт заёмных средств",
+        "sensitivities": [
+            {"topic": "ключевая ставка",
+             "mechanism": "Стоимость обслуживания проектных кредитов и доступность ипотеки "
+                          "для покупателей зависят от ставки."},
+        ],
+    },
+    updated_at=NOW,
+)
+
 
 def news(i: str, title: str, text: str) -> NewsRawEvent:
     return NewsRawEvent(id=i, guid=i, title=title, description=text, link="https://x",
@@ -42,16 +58,22 @@ SAMPLES = [
          "Рассматривается увеличение ввозных пошлин на прокат цветных металлов."),
     news("n3", "Сборная выиграла матч отбора на чемпионат",
          "Матч закончился со счётом 2:1, курс билетов вырос."),
-    news("n4", "ЦБ сохранил ключевую ставку",
-         "Курс рубля к доллару практически не изменился после заседания."),
+    news("n4", "ЦБ сохранил ключевую ставку на уровне 14%",
+         "Совет директоров Банка России сохранил ключевую ставку, прервав цикл снижения."),
 ]
 
 
 async def main() -> None:
-    for n in SAMPLES:
-        m = await score_news(n, COMPANY)
-        print("\n" + n.title)
-        print("  ->", "не подходит" if m is None else f"{m.score:.2f} [{m.category}] {m.explanation}")
+    for company in (COMPANY, COMPANY_CREDIT):
+        print(f"\n===== {company.name} =====")
+        for n in SAMPLES:
+            m = await score_news(n, company)
+            print("\n" + n.title)
+            if m is None:
+                print("  -> не подходит")
+            else:
+                print(f"  -> {m.score:.2f} [{m.category}] impact={m.impact} horizon={m.horizon}")
+                print(f"     {m.explanation}")
 
 
 asyncio.run(main())

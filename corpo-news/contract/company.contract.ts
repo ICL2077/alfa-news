@@ -1,6 +1,8 @@
 export const companyStream = {
   name: 'COMPANY',
-  subject: { core: ['company.>'] },
+  subject: {
+    core: ['company.>'],
+  },
   consumers: {
     mlEnrich: 'company_enrich',
     nestEnriched: 'company_enriched',

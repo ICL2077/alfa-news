@@ -36,6 +36,19 @@ model RawArticle {
   @@map("raw_articles")
 }
 
+model OutboxEvent {
+  id        String    @id @default(uuid())
+  type      String    
+  payload   Json
+  sentAt    DateTime?
+  attempts  Int       @default(0)
+  lastError String?
+  createdAt DateTime  @default(now())
+
+  @@index([sentAt, createdAt])
+  @@map("outbox_events")
+}
+
 model Company {
   id            String   @id @default(uuid())
   inn           String?  @unique // опционально - мб через Dadata поддягивать
@@ -68,6 +81,8 @@ model ArticleMatch {
   summary       String?  @db.Text // саммари от LLM
   explanation   String?  @db.Text // почему это важно для компании
   createdAt     DateTime @default(now())
+  impact  String?
+  horizon String?
 
   // Одна новость может быть релевантна для нескольких компаний, но для одной — только один раз
   @@unique([rawArticleId, companyId])

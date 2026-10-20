@@ -147,6 +147,8 @@ async def handle_news(js, msg) -> None:
             summary=res.summary,
             explanation=res.explanation,
             category=res.category,
+            impact=res.impact,
+            horizon=res.horizon,
             model=res.model,
             processed_at=datetime.now(timezone.utc),
         )

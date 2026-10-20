@@ -1,11 +1,8 @@
-import { NatsJetStreamService } from '@app/nats-jet-stream';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCompanyDto } from './dto/createCompany.dto';
-import {
-  CompanyEnrichEvent,
-  subjectForEnrich,
-} from 'contract/company.contract';
+import { CompanyEnrichEvent } from 'contract/company.contract';
+import { OutboxService } from 'src/outbox/outbox.service';
 
 @Injectable()
 export class CompanyService {
@@ -13,38 +10,29 @@ export class CompanyService {
 
   constructor(
     private prisma: PrismaService,
-    private JSService: NatsJetStreamService,
+    private outbox: OutboxService,
   ) {}
 
   async createCompany(dto: CreateCompanyDto) {
-    const company = await this.prisma.company.create({
-      data: {
-        name: dto.name,
-        ...(dto.description && { description: dto.description }),
-        ...(dto.inn && { inn: dto.inn }),
-      },
+    await this.prisma.$transaction(async (trans) => {
+      const company = await trans.company.create({
+        data: {
+          name: dto.name,
+          ...(dto.description && { description: dto.description }),
+          ...(dto.inn && { inn: dto.inn }),
+        },
+      });
+
+      const enrichEvent: CompanyEnrichEvent = {
+        companyId: company.id,
+        name: company.name,
+        description: company.description,
+        inn: company.inn,
+        region: company.region,
+      };
+
+      await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);
+      return company;
     });
-
-    const enrichEvent: CompanyEnrichEvent = {
-      companyId: company.id,
-      name: company.name,
-      description: company.description,
-      inn: company.inn,
-      region: company.region,
-    };
-
-    try {
-      await this.JSService.publishMessage(
-        subjectForEnrich(company.id),
-        enrichEvent,
-        `${company.id}:enrich:${Date.now()}`,
-      );
-    } catch (e: any) {
-      this.logger.error(
-        `Enrich publish failed for ${company.id}: ${e.message}`,
-      );
-    }
-
-    return company;
   }
 }

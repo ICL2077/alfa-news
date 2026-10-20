@@ -76,6 +76,8 @@ export class NewsProcessedService
     const data = {
       score: event.score,
       category: event.category ?? null,
+      impact: event.impact ?? null,
+      horizon: event.horizon ?? null,
       summary: event.summary ?? null,
       explanation: event.explanation ?? null,
     };
