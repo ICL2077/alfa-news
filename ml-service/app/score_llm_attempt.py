@@ -1,14 +1,21 @@
+# app/score_llm_attempt.py
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from contract.company_contract import CompanyReadyEvent
 from contract.news_contract import NewsRawEvent
 
+from .llm import AnswerTruncated, BudgetExceeded
 from .scoring import score_news
+from .settings import settings
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("scoring").setLevel(logging.DEBUG)
+# шум HTTP-библиотек скрываем, строки llm и scoring оставляем
+for name in ("httpx", "httpx2", "httpcore", "httpcore2", "openai"):
+    logging.getLogger(name).setLevel(logging.WARNING)
 
 NOW = datetime.now(timezone.utc)
 
@@ -64,11 +71,26 @@ SAMPLES = [
 
 
 async def main() -> None:
+    print(
+        f"mode={settings.llm_mode}  model={settings.llm_score_model}\n"
+        f"base_url={settings.llm_base_url}  threshold={settings.score_threshold}\n"
+        f"extra_body={settings.llm_extra_body or '-'}"
+    )
+
     for company in (COMPANY, COMPANY_CREDIT):
         print(f"\n===== {company.name} =====")
         for n in SAMPLES:
-            m = await score_news(n, company)
-            print("\n" + n.title)
+            started = time.monotonic()
+            try:
+                m = await score_news(n, company)
+            except BudgetExceeded as e:
+                print(f"\nДневной бюджет исчерпан: {e}")
+                return
+            except AnswerTruncated as e:
+                print(f"\n{n.title}\n  -> ответ обрезан: {e}")
+                continue
+
+            print(f"\n{n.title}  ({time.monotonic() - started:.1f} c)")
             if m is None:
                 print("  -> не подходит")
             else:
