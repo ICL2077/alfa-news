@@ -6,7 +6,6 @@ from contract.company_contract import CompanyEnrichEvent
 
 from .llm import ask_json
 from .settings import settings
-
 from .topics import MACRO_TOPICS
 
 
@@ -30,7 +29,7 @@ class EnrichResult(BaseModel):
     sensitivities: list[Sensitivity] = Field(default_factory=list)
 
 
-PROMPT = """Ты аналитик, который готовит профиль российской компании для системы
+_BASE = """Ты аналитик, который готовит профиль российской компании для системы
 мониторинга новостей. Цель профиля: по нему будут отбирать новости, которые могут
 повлиять на бизнес этой компании, в том числе новости, где сама компания не упомянута
 (сырьё, поставщики, конкуренты, регуляторы, курсы, санкции, смежные отрасли).
@@ -42,10 +41,15 @@ PROMPT = """Ты аналитик, который готовит профиль 
 - summary: 1-2 предложения, чем занимается компания;
 - industry: отрасль одной короткой фразой;
 - keywords: 15-25 слов и коротких фраз на русском, по которым можно узнать нужную
-  новость: продукты, сырьё, отрасль, регуляторы, смежные темы, макрофакторы.
-  Используй разные формы и синонимы, одиночные слова предпочтительнее длинных фраз;
+  новость: продукты, сырьё, отрасль, регуляторы, смежные темы. Это темы и термины,
+  которые встречаются в заголовках новостей. Не включай названия стран и регионов
+  (они есть в regions) и слова-роли ("конкуренты", "поставщики", "клиенты", "риски").
+  Предпочитай конкретные темы: "цены на алюминий", "утилизация банок";
 - products, customers, suppliers, competitors: списки типов продуктов, клиентов,
-  поставщиков и конкурентов (до 8 пунктов);
+  поставщиков и конкурентов (до 8 пунктов). Не добавляй то, чего нет в описании:
+  размеры, технологии, конкретные виды сырья и услуги. Если описание не позволяет назвать
+  поставщиков или конкурентов, оставь список пустым или укажи только категории,
+  прямо следующие из описания;
 - regions: регионы и рынки, где работает компания;
 - risks: до 8 факторов, способных ударить по бизнесу (цены, пошлины, санкции,
   регуляция, курс, спрос).
@@ -55,18 +59,7 @@ PROMPT = """Ты аналитик, который готовит профиль 
   о её отрасли, но не выдумывай конкретные факты, контракты и названия.
 - Если данных мало, делай осторожные выводы по отрасли, а ненадёжные списки оставляй пустыми.
 - ИНН сам по себе ничего не говорит о бизнесе, не пытайся угадать компанию по нему.
-- keywords: не включай названия стран и регионов (они уже есть в regions) и общие слова
-  без привязки к отрасли ("рынок", "компания", "цены" отдельно). Предпочитай конкретные
-  темы и термины отрасли: "цены на алюминий", "пошлины на алюминий", "утилизация банок".
-- Не добавляй в products, customers и suppliers то, чего нет в описании: размеры,
-  технологии, конкретные виды сырья и услуги. Если описание не позволяет назвать
-  поставщиков или конкурентов, оставь список пустым или укажи только категории,
-  прямо следующие из описания.
-  - keywords это темы и термины, которые встречаются в заголовках новостей. Не используй
-  слова-роли ("конкуренты", "поставщики", "клиенты", "риски") как часть ключевого слова.
-"""
 
-_EXTRA = """
 Дополнительно верни поля:
 - financing: как компания финансирует деятельность и инвестиции (кредиты, займы, лизинг,
   доля заёмных средств). ТОЛЬКО если это сказано в описании, иначе пустая строка;
@@ -79,14 +72,16 @@ _EXTRA = """
 Не выдумывай, что у компании есть кредиты, валютные операции и другие обстоятельства,
 которых нет в описании.
 """
-PROMPT = PROMPT + _EXTRA.replace("__TOPICS__", ", ".join(MACRO_TOPICS))
+SYSTEM = _BASE.replace("__TOPICS__", ", ".join(MACRO_TOPICS))
+
+_ROLE_WORDS = ("конкурент", "поставщик", "клиент", "риск")
 
 
 def _clean(items: list[str], limit: int) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for raw in items:
-        item = " ".join(str(raw).split()).strip(" .,;")
+        item = " ".join(str(raw).replace("\u2011", "-").split()).strip(" .,;")
         key = item.lower()
         if item and key not in seen:
             seen.add(key)
@@ -94,6 +89,11 @@ def _clean(items: list[str], limit: int) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def _clean_keywords(items: list[str], limit: int) -> list[str]:
+    cleaned = _clean(items, limit * 2)
+    return [k for k in cleaned if not any(w in k.lower() for w in _ROLE_WORDS)][:limit]
 
 
 def _stub(event: CompanyEnrichEvent) -> EnrichResult:
@@ -104,14 +104,6 @@ def _stub(event: CompanyEnrichEvent) -> EnrichResult:
         keywords=words,
         regions=[event.region] if event.region else [],
     )
-
-
-_ROLE_WORDS = ("конкурент", "поставщик", "клиент", "риск")
-
-
-def _clean_keywords(items: list[str], limit: int) -> list[str]:
-    cleaned = _clean(items, limit * 2)
-    return [k for k in cleaned if not any(w in k.lower() for w in _ROLE_WORDS)][:limit]
 
 
 async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
@@ -127,7 +119,7 @@ async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
             f"ИНН: {event.inn or 'не указан'}\n"
             "</company>"
         )
-        result = await ask_json(PROMPT, user, EnrichResult, settings.llm_enrich_model)
+        result = await ask_json(SYSTEM, user, EnrichResult, settings.llm_enrich_model)
 
     keywords = _clean_keywords(result.keywords, 25)
     if not keywords:
@@ -135,13 +127,12 @@ async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
         raise ValueError("LLM returned no keywords")
 
     seen: set[str] = set()
-    sens: list[dict] = []
-
+    sensitivities: list[dict] = []
     for s in result.sensitivities:
-        mech = " ".join(s.mechanism.split())
-        if s.topic in MACRO_TOPICS and mech and s.topic not in seen:
+        mechanism = " ".join(s.mechanism.split())
+        if s.topic in MACRO_TOPICS and mechanism and s.topic not in seen:
             seen.add(s.topic)
-            sens.append({"topic": s.topic, "mechanism": mech})
+            sensitivities.append({"topic": s.topic, "mechanism": mechanism})
 
     profile = {
         "summary": result.summary.strip(),
@@ -154,6 +145,6 @@ async def enrich_company(event: CompanyEnrichEvent) -> tuple[list[str], dict]:
         "risks": _clean(result.risks, 8),
         "financing": result.financing.strip(),
         "fx_exposure": result.fx_exposure.strip(),
-        "sensitivities": sens[:6],
+        "sensitivities": sensitivities[:6],
     }
     return keywords, profile
