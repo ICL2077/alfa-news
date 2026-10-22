@@ -1,5 +1,6 @@
 import { deliverPolicies, NatsJetStreamService } from '@app/nats-jet-stream';
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { chatStream } from 'contract/chat.contract';
 import { companyStream } from 'contract/company.contract';
 import { newsStream } from 'contract/news.contract';
 
@@ -49,6 +50,22 @@ const streamSchemas = [
       },
       // company.ready Python будет читать эфемерной подпиской
     ] as Consumer[],
+  },
+  // описываем поток чатов
+  {
+    name: chatStream.name,
+    subjects: chatStream.subjects.core,
+    consumers: [
+      {
+        name: chatStream.consumers.mlRequest,
+        filter: chatStream.filters.request,
+        ackWait: 3 * 60 * 1000, // 3 минуты
+      },
+      {
+        name: chatStream.consumers.nestResponse,
+        filter: chatStream.filters.response,
+      },
+    ],
   },
 ];
 
