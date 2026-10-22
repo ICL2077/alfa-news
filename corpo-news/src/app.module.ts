@@ -8,6 +8,7 @@ import { CompanyEnrichedConsumerModule } from './company-enriched-consumer/compa
 import { NatsBootstrapModule } from './nats-bootstrap/nats-bootstrap.module';
 import { OutboxModule } from './outbox/outbox.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     CompanyEnrichedConsumerModule,
     NatsBootstrapModule,
     OutboxModule,
+    ChatModule,
   ],
   controllers: [],
   providers: [],

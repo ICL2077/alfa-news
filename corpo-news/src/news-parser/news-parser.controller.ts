@@ -10,4 +10,10 @@ export class NewsParserController {
     const saved = await this.service.fetchAndStore();
     return { saved: saved.length };
   }
+
+  // тестовый временный роут для проверки работоспособности чата
+  @Get('matchedArticles')
+  async getAllMatches() {
+    return this.service.getAllMatchedNews();
+  }
 }

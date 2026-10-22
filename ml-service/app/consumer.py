@@ -11,8 +11,16 @@ from openai import (
     NotFoundError,
     PermissionDeniedError,
 )
+from contract.chat_contract import (
+    CHAT_STREAM,
+    ChatConsumers,
+    ChatFilters,
+    ChatRequestEvent,
+    ChatResponseEvent,
+    subject_for_chat_response,
+)
 from pydantic import ValidationError
-
+from .chat import answer_question
 from contract.company_contract import (
     COMPANY_STREAM,
     CompanyConsumers,
@@ -50,6 +58,8 @@ _FATAL = (
     BadRequestError,
     AnswerTruncated,
 )
+
+CHAT_MAX_DELIVER = 5
 
 BUDGET_RETRY_DELAY = 900  # сек, совпадает с паузой в llm.py
 
@@ -240,6 +250,80 @@ async def handle_news(js, msg) -> None:
     log.info("news %s: companies=%d matched=%d", news.id[:8], len(companies), published)
 
 
+async def _respond(js, req: ChatRequestEvent, *, answer=None, error=None, model=None) -> None:
+    out = ChatResponseEvent(
+        chat_id=req.chat_id,
+        reply_to_id=req.message_id,
+        answer=answer,
+        error=error,
+        model=model,
+        responded_at=datetime.now(timezone.utc),
+    )
+    await js.publish(
+        subject_for_chat_response(req.chat_id, req.message_id),
+        out.model_dump_json(by_alias=True, exclude_none=True).encode(),
+        headers={"Nats-Msg-Id": f"chat-response:{req.message_id}"},
+    )
+
+
+async def handle_chat(js, msg) -> None:
+    try:
+        req = ChatRequestEvent.model_validate_json(msg.data)
+    except (ValidationError, ValueError) as e:
+        log.warning("bad chat request on %s: %s", msg.subject, e)
+        await msg.term()
+        return
+
+    hb = asyncio.create_task(keepalive(msg))
+    try:
+        answer = await answer_question(req)
+    except BudgetExceeded:
+        # пользователь ждёт, поэтому отвечаем ошибкой сразу, а не откладываем на 15 минут
+        await _respond(js, req, error="Дневной лимит ИИ исчерпан, попробуйте позже")
+        await msg.term()
+        return
+    except _FATAL as e:
+        log.error("chat fatal: %s: %s", type(e).__name__, e)
+        await _respond(js, req, error="Не удалось получить ответ, переформулируйте вопрос")
+        await msg.term()
+        return
+    except Exception:
+        if msg.metadata.num_delivered >= CHAT_MAX_DELIVER:
+            # последняя попытка: не оставляем пользователя без ответа
+            log.exception("chat failed finally")
+            await _respond(js, req, error="Не удалось получить ответ, повторите вопрос")
+            await msg.term()
+            return
+        raise
+    finally:
+        hb.cancel()
+
+    await _respond(js, req, answer=answer, model=settings.llm_chat_model)
+    await msg.ack()
+    log.info("chat %s: answered (%d chars)", req.chat_id[:8], len(answer))
+
+
+async def chat_loop(js) -> None:
+    psub = await js.pull_subscribe(
+        ChatFilters.REQUEST, durable=ChatConsumers.ML_REQUEST, stream=CHAT_STREAM
+    )
+    log.info("listening %s", ChatFilters.REQUEST)
+
+    while True:
+        if await _wait_budget():
+            continue
+        try:
+            msgs = await psub.fetch(batch=2, timeout=5)
+        except NatsTimeout:
+            continue
+        for msg in msgs:
+            try:
+                await handle_chat(js, msg)
+            except Exception:
+                log.exception("chat request failed, will retry in 10s")
+                await msg.nak(delay=10)
+
+
 async def news_loop(js) -> None:
     psub = await js.pull_subscribe(
         NewsFilters.RAW, durable=NewsConsumers.ML_RAW, stream=NEWS_STREAM
@@ -277,7 +361,7 @@ async def main() -> None:
     try:
         await ready_subscribe(js)
         await asyncio.sleep(2)  # дать снимку компаний загрузиться до первых новостей
-        await asyncio.gather(enrich_loop(js), news_loop(js))
+        await asyncio.gather(enrich_loop(js), news_loop(js), chat_loop(js))
     finally:
         await nc.drain()
 

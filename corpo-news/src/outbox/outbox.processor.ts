@@ -4,12 +4,14 @@ import { NatsJetStreamService } from '@app/nats-jet-stream';
 import { subjectForEnrich, subjectForReady } from 'contract/company.contract';
 import { subjectForRawNews } from 'contract/news.contract';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { subjectForChatRequest } from 'contract/chat.contract';
 
 function subjectByType(type: string, payload: any) {
   const subjects = {
     'company.enrich': subjectForEnrich(payload.companyId),
     'company.ready': subjectForReady(payload.companyId),
     'news.raw': subjectForRawNews(payload.id),
+    'chat.request': subjectForChatRequest(payload.chatId, payload.messageId),
   };
 
   return subjects[type];
@@ -27,7 +29,7 @@ export class OutboxPublisher {
     private JSService: NatsJetStreamService,
   ) {}
 
-  @Interval(10_000)
+  @Interval(1_000)
   async tick() {
     if (this.running) return; // защита от наложения тиков в одном процессе
     this.running = true;

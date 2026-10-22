@@ -115,6 +115,10 @@ export class NewsParserService {
     };
   }
 
+  async getAllMatchedNews() {
+    return await this.prisma.articleMatch.findMany();
+  }
+
   /**
    * Достаёт текст из узла, который может быть:
    * - строкой

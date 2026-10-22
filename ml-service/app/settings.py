@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # Чат
     chat_history_limit: int = 10
     chat_max_tokens: int = 1200
+    chat_article_limit: int = 4000
 
 
 settings = Settings()
