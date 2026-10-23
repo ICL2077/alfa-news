@@ -46,6 +46,8 @@ model OutboxEvent {
   lastError String?
   createdAt DateTime  @default(now())
 
+  nextAttemptAt DateTime @default(now()) 
+
   @@index([sentAt, createdAt])
   @@map("outbox_events")
 }
