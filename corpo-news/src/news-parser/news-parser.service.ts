@@ -5,6 +5,7 @@ import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 import { NewsRawEvent } from 'contract/news.contract';
 import { OutboxService } from 'src/outbox/outbox.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 const API_RSS_URL = 'https://rssexport.rbc.ru/rbcnews/news/30/full.rss';
 
@@ -22,6 +23,7 @@ export class NewsParserService {
     private outbox: OutboxService,
   ) {}
 
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async fetchAndStore() {
     const xml = await this.fetchXml(API_RSS_URL);
     const articles = this.parseRbcXml(xml);
