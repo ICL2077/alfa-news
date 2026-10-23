@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "outbox_events" ADD COLUMN     "nextAttemptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
