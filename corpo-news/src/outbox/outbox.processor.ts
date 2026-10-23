@@ -63,8 +63,11 @@ export class OutboxPublisher {
     }
   }
 
+  // функция берет сообщения и бронирует их для себя (своего инстанса) так чтобы другие инстансы с такой же функцией не могли взять
+  // одно и то же сообщение
   private async claim(): Promise<Claimed[]> {
     const candidates = await this.prisma.outboxEvent.findMany({
+      // берем еще не отправленные в JS сообщения и у которых наступило время попытки (меньше или равно сейчас)
       where: { sentAt: null, nextAttemptAt: { lte: new Date() } },
       orderBy: { createdAt: 'asc' },
       take: 20,
@@ -73,24 +76,24 @@ export class OutboxPublisher {
     const claimed: Claimed[] = [];
 
     for (const event of candidates) {
-      const res = await this.prisma.outboxEvent.updateMany({
+      const res = await this.prisma.outboxEvent.update({
         where: {
           id: event.id,
           sentAt: null,
           nextAttemptAt: event.nextAttemptAt,
         },
         data: {
-          nextAttemptAt: new Date(Date.now() + 30_000),
+          nextAttemptAt: new Date(Date.now() + 30_000), // добавляем 30 секунд к таймеру для того чтобы другой инстанс обрабатывая блок where не получил текущий event - это и есть наше бронирование
           attempts: { increment: 1 },
         },
       });
 
-      if (res.count === 1) {
+      if (res) {
         claimed.push({
-          id: event.id,
-          type: event.type,
-          payload: event.payload,
-          attempts: event.attempts + 1,
+          id: res.id,
+          type: res.type,
+          payload: res.payload,
+          attempts: res.attempts,
         });
       }
     }
@@ -106,7 +109,7 @@ export class OutboxPublisher {
       where: { id: ev.id },
       data: {
         lastError: message,
-        nextAttemptAt: new Date(Date.now() + delaySec * 1000),
+        nextAttemptAt: new Date(Date.now() + delaySec * 1000), // отдаляем чуть чуть дальше сообщение чтобы снова попробовать его обработать
       },
     });
 
