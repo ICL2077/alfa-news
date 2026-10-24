@@ -2,3 +2,5 @@
 # Python virtual environment
 .venv/
 venv/
+
+data/alfa_pdfs
