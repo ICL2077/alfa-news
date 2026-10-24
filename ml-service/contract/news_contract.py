@@ -2,6 +2,8 @@
 from datetime import datetime
 from typing import Optional
 
+from contract.agent_contract import AgentTrace
+
 from pydantic import BaseModel, ConfigDict, Field
 
 # ============================================================
@@ -69,6 +71,7 @@ class NewsProcessedEvent(_Event):
     explanation: str
     category: Optional[str] = None
     model: Optional[str] = None
+    trace: Optional[AgentTrace] = None
     processed_at: datetime = Field(..., alias="processedAt")
     impact: Optional[str] = None
     horizon: Optional[str] = None

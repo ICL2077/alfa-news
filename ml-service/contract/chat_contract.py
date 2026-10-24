@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from contract.agent_contract import AgentTrace
+
 CHAT_STREAM = "CHAT"
 
 
@@ -78,3 +80,5 @@ class ChatResponseEvent(_Event):
     error: Optional[str] = None
     model: Optional[str] = None
     responded_at: datetime = Field(..., alias="respondedAt")
+
+    trace: Optional[AgentTrace] = None
