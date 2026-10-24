@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, field_validator
 
+from . import bank_data
+
 from contract.company_contract import CompanyReadyEvent
 from contract.news_contract import NewsRawEvent
 
@@ -50,10 +52,16 @@ _SYSTEM = """Ты старший аналитик: готовишь для ру�
 - score: число 0..1 (0.8-1.0 прямое сильное влияние, 0.6-0.8 заметное, 0.4-0.6 слабое или
   косвенное, ниже 0.4 почти не касается);
 - category: одно из: __CATEGORIES__;
-- impact: negative, positive, mixed или neutral: как новость скорее всего скажется на клиенте;
-- horizon: short (до 3 месяцев), medium (3-12 месяцев) или long (дольше года): когда проявится эффект;
+- impact: negative, positive, mixed или neutral;
+- horizon: short (до 3 месяцев), medium (3-12 месяцев) или long (дольше года);
 - summary: ОДНО короткое предложение с сутью события, без выводов для клиента;
-- explanation: интерпретация для клиента, 2-4 предложения.
+- explanation: интерпретация для клиента, 2-4 предложения;
+- actions: 1-3 конкретных действия или вопроса для клиента (что проверить, к чему готовиться);
+- alfa_view: 1-2 предложения с позицией Альфа-Банка из <bank_analytics>, если в выдержке
+  есть прямое отношение к новости; иначе пустая строка;
+- sources: список объектов {"type": "news"|"bank"|"alfa", "ref": "..."}, где
+  "news" — фраза из новости, "bank" — название поля профиля (например "products",
+  "ftsCountries", "counterparties.paid"), "alfa" — источник и страница из <bank_analytics>.
 
 Как писать explanation:
 1. Не пересказывай новость, факт уже в summary. Начинай сразу со смысла события.
@@ -76,6 +84,15 @@ _SYSTEM = """Ты старший аналитик: готовишь для ру�
 она не по теме, и не копируй выдержки целиком. Если выдержка противоречит новости или
 явно устарела, скажи об этом.
 
+Строки профиля о выручке, продуктах банка, ВЭД-странах, стадии развития бизнеса, статусе
+клиента, признаке ключевого собственника, географии связанного физлица и платёжных потоках
+взяты из данных банка и являются фактами. Платёжные потоки агрегированы по отраслям
+контрагентов: не называй конкретных контрагентов, но можешь сослаться на отрасль, на
+которую приходится заметная доля платежей. География связанного физлица анонимна: не
+называй физлицо по имени, но можешь сослаться на город или регион как на контекст.
+Если у компании есть ВЭД-страны или признак ключевого собственника, покажи конкретный
+канал влияния (санкции, курс, торговая политика, корпоративное управление, госзаказ).
+
 Пример разницы. Новость: Банк России сохранил ключевую ставку на уровне 14%.
 Плохо (пересказ): "Банк России принял решение сохранить ставку на уровне 14% годовых".
 Хорошо для клиента, у которого есть кредитные продукты и часть инвестиций финансируется
@@ -84,7 +101,7 @@ _SYSTEM = """Ты старший аналитик: готовишь для ру�
 ближайшей перспективе не снизится, поэтому инвестиции за счёт займов стоит считать при
 текущей стоимости долга". Пример показывает глубину и стиль, не копируй его формулировки
 для клиентов с другим профилем.
-Если relevant=false, summary и explanation можно оставить пустыми.
+Если relevant=false, остальные поля можно оставить пустыми.
 """
 SYSTEM = _SYSTEM.replace("__CATEGORIES__", ", ".join(CATEGORIES))
 
@@ -97,6 +114,9 @@ class ScoreResult(BaseModel):
     horizon: str = "medium"
     summary: str = ""
     explanation: str = ""
+    actions: list[str] = []
+    alfa_view: str = ""
+    sources: list[dict] = []
 
     @field_validator("score")
     @classmethod
@@ -115,6 +135,26 @@ class ScoreResult(BaseModel):
         v = str(v).strip().lower()
         return v if v in HORIZONS else "medium"
 
+    @field_validator("actions", mode="before")
+    @classmethod
+    def _actions(cls, v):
+        if not v:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return [str(x) for x in v if str(x).strip()][:3]
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def _sources(cls, v):
+        if not v:
+            return []
+        out = []
+        for item in v:
+            if isinstance(item, dict) and item.get("type") and item.get("ref"):
+                out.append({"type": str(item["type"]), "ref": str(item["ref"])})
+        return out
+
 
 @dataclass
 class Match:
@@ -125,30 +165,41 @@ class Match:
     impact: str | None
     horizon: str | None
     model: str
+    actions: list[str] | None = None
+    alfa_view: str | None = None
+    sources: list[dict] | None = None
     trace: AgentTrace | None = None
 
 
 # ---------- префильтр ----------
 
-_WORD = re.compile(r"[a-zа-яё]{4,}")
+_WORD = re.compile(r"[a-zа-яё0-9]{3,}", re.IGNORECASE)
+_STOP = {"для", "или", "как", "что", "это", "при", "без", "под", "над", "про",
+         "все", "его", "она", "они", "оно", "так", "там", "тут", "где", "когда",
+         "чем", "эти", "тот", "тем", "тех"}
 
 
 def _profile_fields(company: CompanyReadyEvent) -> list[str]:
     p = company.profile_json or {}
     keys = ("summary", "industry", "products", "customers", "suppliers", "competitors",
-            "regions", "financing", "fx_exposure", "risks", "sensitivities")
+            "regions", "financing", "fx_exposure", "risks", "sensitivities", "bank")
     return [k for k in keys if p.get(k)]
+
 
 def _stem(word: str) -> str:
     return word[:5]
 
 
+def _stems(text: str) -> set[str]:
+    return {_stem(w) for w in _WORD.findall(text.lower()) if w not in _STOP}
+
+
 def prefilter_hits(text: str, terms: list[str]) -> list[str]:
     """Фразы из terms, подтверждённые текстом. Для фразы из 2+ слов нужны минимум две основы."""
-    tokens = {_stem(t) for t in _WORD.findall(text.lower())}
+    tokens = _stems(text)
     hits: list[str] = []
     for term in terms:
-        stems = {_stem(w) for w in _WORD.findall(term.lower())}
+        stems = _stems(term)
         if not stems:
             continue
         need = 1 if len(stems) == 1 else 2
@@ -157,16 +208,50 @@ def prefilter_hits(text: str, terms: list[str]) -> list[str]:
     return hits
 
 
-_TERM_FIELDS = ("risks", "suppliers", "customers", "products", "competitors")
-
-
 def prefilter_terms(company: CompanyReadyEvent) -> list[str]:
-    terms = list(company.keywords)
     profile = company.profile_json or {}
-    for key in _TERM_FIELDS:
+    terms: list[str] = []
+
+    # 1) базовые поля профиля
+    for key in ("summary", "industry", "products", "customers", "suppliers",
+                "competitors", "regions", "risks"):
         val = profile.get(key)
         if isinstance(val, list):
             terms.extend(str(v) for v in val)
+        elif isinstance(val, str) and val.strip():
+            terms.append(val)
+
+    # 2) имя и описание компании (то, что вы сочинили в make_demo_companies)
+    if company.name:
+        terms.append(company.name)
+    if company.description:
+        terms.append(company.description)
+
+    # 3) ключевые слова, которые уже извлёк enrich
+    terms.extend(company.keywords or [])
+
+    # 4) банковский профиль
+    bank = profile.get("bank") or {}
+    if bank.get("okvedCode"):
+        terms.append(str(bank["okvedCode"]))
+    if bank.get("okved"):
+        for w in bank["okved"].replace(",", " ").split():
+            if len(w) >= 4:
+                terms.append(w.lower())
+    for c in bank.get("ftsCountries") or []:
+        terms.append(str(c).lower())
+    if bank.get("region"):
+        terms.append(bank["region"].lower())
+    for r in (bank.get("geography") or {}).get("topRegions", []):
+        if r.get("rc"):
+            terms.append(r["rc"].lower())
+    for block in (bank.get("counterparties") or {}).values():
+        for ind in (block or {}).get("topOkved", []):
+            if ind.get("okved") and ind["okved"] != "не определён":
+                for w in ind["okved"].replace(",", " ").split():
+                    if len(w) >= 4:
+                        terms.append(w.lower())
+
     return terms
 
 
@@ -193,6 +278,8 @@ def _profile_block(company: CompanyReadyEvent) -> str:
     lines = [f"Название: {company.name}"]
     if company.description:
         lines.append(f"Описание: {company.description}")
+    if isinstance(p.get("bank"), dict):
+        lines.extend(bank_data.describe(p["bank"]))
     labels = [
         ("summary", "Суть бизнеса"), ("industry", "Отрасль"), ("products", "Продукты"),
         ("customers", "Клиенты"), ("suppliers", "Поставщики"), ("competitors", "Конкуренты"),
@@ -214,6 +301,27 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
     trace = Trace()
     text = _news_text(news)
 
+    # --- страховка: если enrich не отработал, подтянуть bank из CSV на лету ---
+    profile = dict(company.profile_json or {})
+    bank_id = getattr(company, "bank_client_id", None)
+    if not isinstance(profile.get("bank"), dict) and bank_id:
+        try:
+            bp = bank_data.bank_profile(bank_id)
+            if bp:
+                profile["bank"] = bp
+                financing, forced = bank_data.derive(bp)
+                if financing and not profile.get("financing"):
+                    profile["financing"] = financing
+                have = {s["topic"] for s in profile.get("sensitivities") or [] if isinstance(s, dict)}
+                profile["sensitivities"] = (
+                    [s for s in forced if s["topic"] not in have]
+                    + list(profile.get("sensitivities") or [])
+                )[:6]
+                company = company.model_copy(update={"profile_json": profile})
+                log.debug("bank_profile подтянут на лету для %s", company.name)
+        except Exception:
+            log.exception("bank_profile on-the-fly failed")
+
     with trace.step("company_context", "Профиль компании, под который оценивается новость") as s:
         s.detail.update(
             company=company.name,
@@ -222,17 +330,20 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         )
 
     with trace.step("prefilter", "Предварительный отбор по темам и ключевым словам") as s:
-        hits = prefilter_hits(text, prefilter_terms(company))
+        terms = prefilter_terms(company)
+        hits = prefilter_hits(text, terms)
         signals = macro_signals(text, company)
         passed = bool(signals) or len(hits) >= settings.prefilter_min_hits
         s.detail.update(
             keywords=hits[:8],
             macroTopics=[t for t, _ in signals],
             passed=passed,
+            termsCount=len(terms),
+            signalsCount=len(signals),
         )
     if not passed:
-        # трассу отсеянных пар не сохраняем: в ленту они не попадают
-        log.debug("news %s x %s: prefilter drop", news.id[:8], company.name)
+        log.debug("news %s x %s: prefilter drop (terms=%d, hits=0, signals=0)",
+                  news.id[:8], company.name, len(terms))
         return None
 
     if settings.llm_mode == "stub":
@@ -242,6 +353,7 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
             summary=news.title,
             explanation=f"Совпадение по темам компании: {', '.join(found)}",
             category=None, impact=None, horizon=None, model="stub",
+            actions=[], alfa_view="", sources=[],
             trace=trace.build(),
         )
 
@@ -302,6 +414,9 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
             impact=result.impact,
             horizon=result.horizon,
             shown=keep,
+            actions=result.actions,
+            alfaView=bool(result.alfa_view),
+            sourcesCount=len(result.sources),
         )
 
     log.debug(
@@ -320,5 +435,8 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         impact=result.impact,
         horizon=result.horizon,
         model=settings.llm_score_model,
+        actions=result.actions,
+        alfa_view=result.alfa_view.strip(),
+        sources=result.sources,
         trace=trace.build(),
     )
