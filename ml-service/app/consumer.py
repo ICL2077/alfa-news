@@ -251,13 +251,14 @@ async def handle_news(js, msg) -> None:
     log.info("news %s: companies=%d matched=%d", news.id[:8], len(companies), published)
 
 
-async def _respond(js, req: ChatRequestEvent, *, answer=None, error=None, model=None) -> None:
+async def _respond(js, req: ChatRequestEvent, *, answer=None, error=None, model=None, trace=None) -> None:
     out = ChatResponseEvent(
         chat_id=req.chat_id,
         reply_to_id=req.message_id,
         answer=answer,
         error=error,
         model=model,
+        trace=trace,
         responded_at=datetime.now(timezone.utc),
     )
     await js.publish(
@@ -277,7 +278,7 @@ async def handle_chat(js, msg) -> None:
 
     hb = asyncio.create_task(keepalive(msg))
     try:
-        answer = await answer_question(req)
+        answer, trace = await answer_question(req)
     except BudgetExceeded:
         # пользователь ждёт, поэтому отвечаем ошибкой сразу, а не откладываем на 15 минут
         await _respond(js, req, error="Дневной лимит ИИ исчерпан, попробуйте позже")
@@ -299,7 +300,7 @@ async def handle_chat(js, msg) -> None:
     finally:
         hb.cancel()
 
-    await _respond(js, req, answer=answer, model=settings.llm_chat_model)
+    await _respond(js, req, answer=answer, model=settings.llm_chat_model, trace=trace)
     await msg.ack()
     log.info("chat %s: answered (%d chars)", req.chat_id[:8], len(answer))
 

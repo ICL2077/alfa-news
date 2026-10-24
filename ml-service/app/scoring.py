@@ -7,9 +7,12 @@ from pydantic import BaseModel, field_validator
 from contract.company_contract import CompanyReadyEvent
 from contract.news_contract import NewsRawEvent
 
+from contract.agent_contract import AgentTrace
+
 from .llm import ask_json
 from .settings import settings
 from .topics import MACRO_TOPICS
+from .trace import Trace
 from . import rag
 
 log = logging.getLogger("scoring")
@@ -122,12 +125,19 @@ class Match:
     impact: str | None
     horizon: str | None
     model: str
+    trace: AgentTrace | None = None
 
 
 # ---------- префильтр ----------
 
 _WORD = re.compile(r"[a-zа-яё]{4,}")
 
+
+def _profile_fields(company: CompanyReadyEvent) -> list[str]:
+    p = company.profile_json or {}
+    keys = ("summary", "industry", "products", "customers", "suppliers", "competitors",
+            "regions", "financing", "fx_exposure", "risks", "sensitivities")
+    return [k for k in keys if p.get(k)]
 
 def _stem(word: str) -> str:
     return word[:5]
@@ -201,13 +211,27 @@ def _profile_block(company: CompanyReadyEvent) -> str:
 # ---------- основная функция ----------
 
 async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | None:
+    trace = Trace()
     text = _news_text(news)
-    hits = prefilter_hits(text, prefilter_terms(company))
-    signals = macro_signals(text, company)
 
-    # макросигнал пропускает новость без ключевых слов: ставка, курс и налоги
-    # редко содержат отраслевые термины
-    if not signals and len(hits) < settings.prefilter_min_hits:
+    with trace.step("company_context", "Профиль компании, под который оценивается новость") as s:
+        s.detail.update(
+            company=company.name,
+            profileFields=_profile_fields(company),
+            keywordsTotal=len(company.keywords),
+        )
+
+    with trace.step("prefilter", "Предварительный отбор по темам и ключевым словам") as s:
+        hits = prefilter_hits(text, prefilter_terms(company))
+        signals = macro_signals(text, company)
+        passed = bool(signals) or len(hits) >= settings.prefilter_min_hits
+        s.detail.update(
+            keywords=hits[:8],
+            macroTopics=[t for t, _ in signals],
+            passed=passed,
+        )
+    if not passed:
+        # трассу отсеянных пар не сохраняем: в ленту они не попадают
         log.debug("news %s x %s: prefilter drop", news.id[:8], company.name)
         return None
 
@@ -218,12 +242,38 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
             summary=news.title,
             explanation=f"Совпадение по темам компании: {', '.join(found)}",
             category=None, impact=None, horizon=None, model="stub",
+            trace=trace.build(),
         )
 
     query = " ".join([news.title, news.description or "", *[t for t, _ in signals]])
-    bank = rag.bank_context(query)
-    bank_block = f"<bank_analytics>\n{bank}\n</bank_analytics>\n" if bank else ""
+    with trace.step("rag_search", "Поиск в аналитике Альфа-Банка") as s:
+        try:
+            r = rag.retrieve(query)
+        except Exception as e:
+            log.warning("rag search failed: %s", e)
+            r = rag.Retrieval(False, (), 0.0, "")
+            s.skip("поиск в аналитике не удался")
+        else:
+            s.detail.update(
+                query=query[:200],
+                threshold=settings.rag_min_score,
+                bestScore=round(r.best_score, 1),
+                used=[
+                    {
+                        "source": h.chunk.source,
+                        "page": h.chunk.page,
+                        "score": round(h.score, 1),
+                        "excerpt": h.chunk.text[:220],
+                    }
+                    for h in r.hits
+                ],
+            )
+            if not r.ready:
+                s.skip("индекс аналитики не загружен")
+            elif not r.hits:
+                s.skip("подходящих фрагментов выше порога нет")
 
+    bank_block = f"<bank_analytics>\n{r.context}\n</bank_analytics>\n" if r.context else ""
     sig_lines = [f"- тема «{t}»" + (f": {m}" if m else "") for t, m in signals]
     user = (
         f"<company>\n{_profile_block(company)}\n</company>\n"
@@ -236,14 +286,30 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         f"<news>\nЗаголовок: {news.title}\n"
         f"Текст: {text[: settings.news_text_limit]}\n</news>"
     )
-    result = await ask_json(SYSTEM, user, ScoreResult, settings.llm_score_model)  # type: ignore[arg-type]
+
+    usage: dict = {}
+    with trace.step("llm_call", "Анализ новости моделью") as s:
+        result = await ask_json(SYSTEM, user, ScoreResult, settings.llm_score_model, usage=usage)  # type: ignore[arg-type]
+        s.detail.update(model=settings.llm_score_model, **usage)
+
+    keep = result.relevant and result.score >= settings.score_threshold
+    with trace.step("decision", "Решение: показывать ли новость клиенту") as s:
+        s.detail.update(
+            relevant=result.relevant,
+            score=round(result.score, 2),
+            threshold=settings.score_threshold,
+            category=result.category,
+            impact=result.impact,
+            horizon=result.horizon,
+            shown=keep,
+        )
 
     log.debug(
         "news %s x %s: relevant=%s score=%.2f impact=%s signals=%s hits=%s",
         news.id[:8], company.name, result.relevant, result.score, result.impact,
         [t for t, _ in signals], hits,
     )
-    if not result.relevant or result.score < settings.score_threshold:
+    if not keep:
         return None
 
     return Match(
@@ -254,4 +320,5 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         impact=result.impact,
         horizon=result.horizon,
         model=settings.llm_score_model,
+        trace=trace.build(),
     )

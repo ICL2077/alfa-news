@@ -3,6 +3,8 @@ from contract.chat_contract import ChatRequestEvent
 from .llm import ask_text
 from .scoring import _profile_block
 from .settings import settings
+from contract.agent_contract import AgentTrace
+from .trace import Trace
 
 _PROMPT = """Ты персональный аналитик клиента. Клиент открыл новость и задаёт по ней вопросы.
 Отвечай по существу, на русском, до 6-8 предложений, без воды. Не пересказывай новость,
@@ -43,19 +45,34 @@ def _context(req: ChatRequestEvent) -> str:
     )
 
 
-async def answer_question(req: ChatRequestEvent) -> str:
+async def answer_question(req: ChatRequestEvent) -> tuple[str, AgentTrace]:
+    trace = Trace()
+    history = req.history[-settings.chat_history_limit :]
+
+    with trace.step("chat_context", "Контекст диалога") as s:
+        s.detail.update(
+            company=req.context.company.name,
+            article=req.context.article.title[:120],
+            hasNewsAnalysis=bool(req.context.match.explanation),
+            historyMessages=len(history),
+        )
+
     if settings.llm_mode == "stub":
-        return f"[stub] Вопрос получен: {req.question}"
+        return f"[stub] Вопрос получен: {req.question}", trace.build()
 
     messages: list[dict] = [
         {"role": "system", "content": _PROMPT + "\n\n" + _context(req)}
     ]
-    for h in req.history[-settings.chat_history_limit :]:
+    for h in history:
         role = "assistant" if h.role.upper() in ("AI", "ASSISTANT") else "user"
         messages.append({"role": role, "content": h.content})
     messages.append({"role": "user", "content": req.question})
 
-    answer = await ask_text(messages, settings.llm_chat_model, settings.chat_max_tokens)
+    usage: dict = {}
+    with trace.step("llm_call", "Формирование ответа моделью") as s:
+        answer = await ask_text(messages, settings.llm_chat_model, settings.chat_max_tokens, usage=usage)
+        s.detail.update(model=settings.llm_chat_model, **usage)
+
     if not answer:
         raise ValueError("LLM returned empty answer")
-    return answer
+    return answer, trace.build()

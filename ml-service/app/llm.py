@@ -101,7 +101,6 @@ async def _create(**kwargs):
             raise BudgetExceeded(str(e)) from e
         raise
 
-
 def _log_usage(model: str, resp) -> None:
     choice = resp.choices[0]
     if resp.usage:
@@ -112,6 +111,15 @@ def _log_usage(model: str, resp) -> None:
             resp.usage.completion_tokens,
             choice.finish_reason,
         )
+
+def _fill_usage(usage: dict | None, resp) -> None:
+    if usage is None:
+        return
+    usage.update(
+        promptTokens=resp.usage.prompt_tokens if resp.usage else None,
+        completionTokens=resp.usage.completion_tokens if resp.usage else None,
+        finishReason=resp.choices[0].finish_reason,
+    )
 
 
 def _extra_body() -> dict | None:
@@ -125,7 +133,7 @@ def _extra_body() -> dict | None:
     wait=wait_exponential(multiplier=2, min=3, max=30),
     reraise=True,
 )
-async def ask_json(system: str, user: str, schema: type[BaseModel], model: str):
+async def ask_json(system: str, user: str, schema: type[BaseModel], model: str, usage: dict | None = None):
     kwargs: dict = dict(
         model=model,
         messages=[
@@ -144,6 +152,8 @@ async def ask_json(system: str, user: str, schema: type[BaseModel], model: str):
     resp = await _create(**kwargs)
     _log_usage(model, resp)
 
+    _fill_usage(usage, resp)
+
     if resp.choices[0].finish_reason == "length":
         raise AnswerTruncated(
             f"{model}: answer cut at max_tokens={settings.llm_max_tokens}"
@@ -161,7 +171,7 @@ async def ask_json(system: str, user: str, schema: type[BaseModel], model: str):
     wait=wait_exponential(multiplier=2, min=3, max=20),
     reraise=True,
 )
-async def ask_text(messages: list[dict], model: str, max_tokens: int) -> str:
+async def ask_text(messages: list[dict], model: str, max_tokens: int, usage: dict | None = None) -> str:
     """Свободный текстовый ответ (для чата)."""
     kwargs: dict = dict(
         model=model,
@@ -175,6 +185,7 @@ async def ask_text(messages: list[dict], model: str, max_tokens: int) -> str:
 
     resp = await _create(**kwargs)
     _log_usage(model, resp)
+    _fill_usage(usage, resp)
     return _THINK.sub("", resp.choices[0].message.content or "").strip()
 
 @retry(

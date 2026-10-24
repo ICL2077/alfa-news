@@ -54,6 +54,14 @@ def _tokens(text: str) -> list[str]:
     # основа в 4 символа: "нефть"/"нефти" и "рубль"/"рубля" сходятся
     return [w[:4] for w in _WORD.findall(text.lower().replace("ё", "е"))]
 
+def debug_top(query: str, n: int = 3) -> list[Hit]:
+    """Лучшие фрагменты без порога: для настройки RAG_MIN_SCORE."""
+    if _bm25 is None:
+        return []
+    scores = _bm25.get_scores(_tokens(query))
+    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
+    return [Hit(_chunks[i], float(scores[i])) for i in order]
+
 
 # ---------------- OCR ----------------
 
@@ -180,37 +188,48 @@ async def init_rag() -> None:
 
     _chunks = chunks
     _bm25 = BM25Okapi(tokenized)
-    _search.cache_clear()
+    _retrieve.cache_clear()
     log.info("RAG готов: файлов=%d, фрагментов=%d", len(pdfs), len(chunks))
 
 
 # ---------------- поиск ----------------
 
-def debug_top(query: str, n: int = 3) -> list[Hit]:
-    """Лучшие фрагменты без порога: для настройки RAG_MIN_SCORE."""
-    if _bm25 is None:
-        return []
-    scores = _bm25.get_scores(_tokens(query))
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
-    return [Hit(_chunks[i], float(scores[i])) for i in order]
+@dataclass(frozen=True)
+class Retrieval:
+    ready: bool                  # индекс загружен
+    hits: tuple[Hit, ...]        # фрагменты, попавшие в промпт
+    best_score: float            # лучший балл (даже если он ниже порога)
+    context: str                 # текст для промпта
 
 
 @lru_cache(maxsize=512)
-def _search(query: str) -> tuple[Hit, ...]:
+def _retrieve(query: str) -> Retrieval:
+    if _bm25 is None:
+        return Retrieval(False, (), 0.0, "")
+
     top = debug_top(query, settings.rag_top_k)
-    if not top or top[0].score < settings.rag_min_score:
-        return ()  # слабое совпадение: лучше без контекста, чем с шумом
-    return tuple(h for h in top if h.score >= 0.6 * top[0].score)
+    best = top[0].score if top else 0.0
+    if not top or best < settings.rag_min_score:
+        return Retrieval(True, (), best, "")  # слабое совпадение: лучше без контекста, чем с шумом
+
+    used: list[Hit] = []
+    parts: list[str] = []
+    total = 0
+    for h in top:
+        if h.score < 0.6 * best:
+            continue
+        block = f"[{h.chunk.source}, стр. {h.chunk.page}]\n{h.chunk.text}"
+        if total + len(block) > settings.rag_max_chars:
+            break
+        used.append(h)
+        parts.append(block)
+        total += len(block)
+    return Retrieval(True, tuple(used), best, "\n\n".join(parts))
+
+
+def retrieve(query: str) -> Retrieval:
+    return _retrieve(query[:800])
 
 
 def bank_context(query: str) -> str:
-    """Выдержки из аналитики для промпта; пустая строка, если ничего подходящего."""
-    parts: list[str] = []
-    used = 0
-    for hit in _search(query[:800]):
-        block = f"[{hit.chunk.source}, стр. {hit.chunk.page}]\n{hit.chunk.text}"
-        if used + len(block) > settings.rag_max_chars:
-            break
-        parts.append(block)
-        used += len(block)
-    return "\n\n".join(parts)
+    return retrieve(query).context
