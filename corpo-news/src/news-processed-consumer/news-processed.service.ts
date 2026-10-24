@@ -7,6 +7,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { NewsProcessedEvent, newsStream } from 'contract/news.contract';
+import { Prisma } from 'generated/prisma';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -82,19 +83,41 @@ export class NewsProcessedService
       explanation: event.explanation ?? null,
     };
 
-    await this.prisma.articleMatch.upsert({
-      where: {
-        rawArticleId_companyId: {
+    await this.prisma.$transaction(async (trans) => {
+      const match = await trans.articleMatch.upsert({
+        where: {
+          rawArticleId_companyId: {
+            rawArticleId: event.articleId,
+            companyId: event.companyId,
+          },
+        },
+        create: {
           rawArticleId: event.articleId,
           companyId: event.companyId,
+          ...data,
         },
-      },
-      create: {
-        rawArticleId: event.articleId,
-        companyId: event.companyId,
-        ...data,
-      },
-      update: data,
+        update: data,
+      });
+
+      if (event.trace) {
+        await trans.agentRun.upsert({
+          where: { articleMatchId: match.id },
+          create: {
+            kind: 'NEWS_MATCH',
+            articleMatchId: match.id,
+            model: event.model ?? null,
+            durationMs: event.trace.durationMs,
+            steps: event.trace.steps as unknown as Prisma.InputJsonValue,
+          },
+          update: {
+            model: event.model ?? null,
+            durationMs: event.trace.durationMs,
+            steps: event.trace.steps as unknown as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      return match;
     });
   }
 }

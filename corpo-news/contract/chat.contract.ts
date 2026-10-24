@@ -1,3 +1,5 @@
+import { AgentTrace } from './agent.contract';
+
 export const chatStream = {
   name: 'CHAT',
   subjects: { core: ['chat.>'] },
@@ -49,6 +51,7 @@ export interface ChatResponseEvent {
   replyToId: string; // id вопроса, на который это ответ
   answer?: string;
   error?: string;
+  trace?: AgentTrace | null;
   model?: string;
   respondedAt: string; // ISO, UTC
 }

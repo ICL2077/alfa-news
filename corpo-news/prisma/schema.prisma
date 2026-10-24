@@ -87,6 +87,8 @@ model ArticleMatch {
   impact  String?
   horizon String?
 
+  agentRun AgentRun?
+
   chat Chat? // на тему новости можно вступить в диалог с ии
 
   // Одна новость может быть релевантна для нескольких компаний, но для одной — только один раз
@@ -118,6 +120,8 @@ model Message {
   role MessageRole // тот кто отправил сообщение (user или ответ иишки)
   status MessageStatus @default(PENDING) // статус обработки сообщения
 
+  agentRun AgentRun?
+
   replyToId String? // id сообщения на которое отвечает llm
 
   createdAt DateTime @default(now())
@@ -125,6 +129,25 @@ model Message {
   @@index([chatId, createdAt])
   @@index([status, createdAt])
   @@map("messages")
+}
+
+model AgentRun {
+  id         String       @id @default(uuid())
+  kind       AgentRunKind
+
+  articleMatch   ArticleMatch? @relation(fields: [articleMatchId], references: [id], onDelete: Cascade)
+  articleMatchId String?       @unique
+
+  message    Message?     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId  String?      @unique
+
+  model      String?
+  durationMs Int?
+  steps      Json         // массив шагов, формат в contract/agent.contract.ts
+  createdAt  DateTime     @default(now())
+
+  @@index([kind, createdAt])
+  @@map("agent_runs")
 }
 
 enum ProfileStatus {
@@ -141,4 +164,9 @@ enum MessageStatus {
   PENDING
   DONE
   FAILED
+}
+
+enum AgentRunKind {
+  NEWS_MATCH
+  CHAT_ANSWER
 }
