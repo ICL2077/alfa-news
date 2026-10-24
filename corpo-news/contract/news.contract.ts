@@ -2,6 +2,8 @@
 // NATS: stream, subjects, consumer names
 // ============================================================
 
+import { AgentTrace } from './agent.contract';
+
 export const newsStream = {
   name: 'NEWS',
   subjects: {
@@ -50,6 +52,9 @@ export interface NewsProcessedEvent {
   model?: string;
   impact?: string | null;
   horizon?: string | null;
+
+  trace?: AgentTrace | null;
+
   /** ISO, UTC */
   processedAt: string;
 }

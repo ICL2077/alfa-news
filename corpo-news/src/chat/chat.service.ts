@@ -11,6 +11,8 @@ import { MessageDto } from './dto/message.dto';
 import { ChatRequestEvent, ChatResponseEvent } from 'contract/chat.contract';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ChatEventsService } from './chat-events.service';
+import { Prisma } from 'generated/prisma';
+import { AgentStep } from 'contract/agent.contract';
 
 @Injectable()
 export class ChatService {
@@ -37,14 +39,25 @@ export class ChatService {
   }
 
   async getMessagesFromChat(id: string) {
-    const chat = await this.prisma.chat.findUnique({
-      where: { id: id },
-      include: { messages: true },
+    const messages = await this.prisma.message.findMany({
+      where: { chatId: id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        agentRun: {
+          select: { steps: true, durationMs: true, model: true },
+        },
+      },
     });
 
-    if (!chat) throw new NotFoundException('Chat whith this id is not found');
-
-    return chat.messages;
+    return messages.map(({ agentRun, ...m }) => ({
+      ...m,
+      trace: agentRun
+        ? {
+            steps: agentRun.steps as unknown as AgentStep[],
+            durationMs: agentRun.durationMs ?? 0,
+          }
+        : null,
+    }));
   }
 
   // сохраняем отправленное сообщение и отправляем его к llm за ответом
@@ -166,11 +179,32 @@ export class ChatService {
           replyToId: userMessage.id,
         },
       });
-      return { type: 'message', message: answer };
+
+      if (e.trace) {
+        await trans.agentRun.create({
+          data: {
+            kind: 'CHAT_ANSWER',
+            messageId: answer.id,
+            model: null,
+            durationMs: e.trace.durationMs,
+            steps: e.trace.steps as unknown as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      return { type: 'message', message: answer, trace: e.trace ?? null };
     });
 
-    if (res)
-      this.events.emit(e.chatId, res.type as 'message' | 'failed', res.message);
+    if (res) {
+      if (res.type === 'message') {
+        this.events.emit(e.chatId, 'message', {
+          ...res.message,
+          trace: res.trace ?? null,
+        });
+      } else {
+        this.events.emit(e.chatId, 'failed', res.message);
+      }
+    }
   }
 
   // те сообщения что не получили ответ в течении 3х минут мы будем помечать failed
