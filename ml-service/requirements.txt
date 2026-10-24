@@ -5,3 +5,4 @@ openai
 tenacity
 pymupdf
 rank-bm25
+pandas

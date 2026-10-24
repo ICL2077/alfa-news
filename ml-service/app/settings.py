@@ -15,23 +15,20 @@ class Settings(BaseSettings):
     llm_chat_model: str = "qwen/qwen3.6-35b-a3b"
     llm_timeout: float = 180
     llm_concurrency: int = 2
-    llm_min_interval: float = 0       # пауза между вызовами, сек
+    llm_min_interval: float = 0
     llm_json_mode: bool = True
-    llm_extra_body: str = ""          # JSON-строка, например {"reasoning":{"enabled":false}}
+    llm_extra_body: str = ""
     llm_max_tokens: int = 2500
     llm_temperature: float = 0.2
 
-    # Скоринг новостей
     score_threshold: float = 0.5
     prefilter_min_hits: int = 1
     news_text_limit: int = 2500
 
-    # Чат
     chat_history_limit: int = 10
     chat_max_tokens: int = 1200
     chat_article_limit: int = 4000
 
-    # RAG по аналитике Альфа-Банка
     rag_enabled: bool = True
     rag_dir: str = "data/alfa_pdfs"
     rag_cache_dir: str = "data/alfa_cache"
@@ -42,8 +39,18 @@ class Settings(BaseSettings):
     rag_top_k: int = 3
     rag_max_chars: int = 2400
     rag_chunk_size: int = 900
-    rag_min_score: float = 6.0   # подбирается по скрипту try_rag
+    rag_min_score: float = 6.0
 
+    # Данные банка (CSV)
+    bank_csv_dir: str = "data/csv"
+    bank_cache_dir: str = "data/bank_cache"
+    bank_uid_file: str = "df_Uid_data_hack.csv"
+    bank_payment_file: str = "df_Uid_payment_hack.csv"
+    bank_link_file: str = "df_Fid_Uid_link_hack.csv"
+    bank_csv_sep: str = ";"
+    bank_revenue_unit: float = 1.0
+    bank_links_enabled: bool = True
+    bank_payments_enabled: bool = True
 
 settings = Settings()
 

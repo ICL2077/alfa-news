@@ -51,6 +51,7 @@ class CompanyEnrichEvent(_Event):
     description: Optional[str] = None
     inn: Optional[str] = None
     region: Optional[str] = None
+    bank_client_id: Optional[str] = Field(None, alias="bankClientId")
 
 
 class CompanyEnrichedEvent(_Event):
@@ -60,6 +61,8 @@ class CompanyEnrichedEvent(_Event):
     keywords: list[str]
     profile_json: dict[str, Any] = Field(..., alias="profileJson")  # объект, не строка
     enriched_at: datetime = Field(..., alias="enrichedAt")
+
+    bank_client_id: Optional[str] = Field(None, alias="bankClientId")
 
 
 class CompanyReadyEvent(_Event):
@@ -72,3 +75,5 @@ class CompanyReadyEvent(_Event):
     keywords: list[str] = []
     profile_json: Optional[dict[str, Any]] = Field(None, alias="profileJson")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+    bank_client_id: Optional[str] = Field(None, alias="bankClientId")

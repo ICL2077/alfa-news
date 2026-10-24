@@ -14,18 +14,22 @@ from .rag import init_rag
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("scoring").setLevel(logging.DEBUG)
-# шум HTTP-библиотек скрываем, строки llm и scoring оставляем
 for name in ("httpx", "httpx2", "httpcore", "httpcore2", "openai"):
     logging.getLogger(name).setLevel(logging.WARNING)
 
 NOW = datetime.now(timezone.utc)
 
+# «Алюпак» привязан к U_141: опт бытовыми электротоварами, есть кредит, лизинг, депозиты,
+# ключевой собственник. У самой компании нет «алюминия» в ОКВЭД, но демо-описание это
+# компенсирует: новости про алюминий/металл ловятся через description/keywords, а реакция
+# на ставку — через реальные bank-продукты.
 COMPANY = CompanyReadyEvent(
     company_id="test",
     name="Алюпак",
     description="Производим алюминиевые банки для напитков, продаём пивоваренным и лимонадным заводам.",
     keywords=["алюминиевые банки", "цены на алюминий", "тарифы на металл", "спрос на пиво",
               "утилизация алюминиевых банок", "курс рубля", "налоги на упаковку"],
+    bank_client_id="U_141",
     profile_json={
         "industry": "Производство алюминиевых упаковок",
         "customers": ["пивоваренные заводы", "лимонадные заводы"],
@@ -35,20 +39,22 @@ COMPANY = CompanyReadyEvent(
     updated_at=NOW,
 )
 
+# «СтройИнвест» привязан к U_9250: строительство инженерных сооружений, есть кредит,
+# гарантии, лизинг, зарплатный проект, ВЭД КИТАЙ, ключевой собственник.
+# sensitivities НЕ прописываем руками — derive добавит «ключевую ставку» и «ВЭД»
+# из реальных bank-данных, а prefilter_terms заберёт ОКВЭД/регион/страны ФТС.
 COMPANY_CREDIT = CompanyReadyEvent(
     company_id="t2",
     name="СтройИнвест",
     description="Девелопер жилья. Строительство финансируем проектными кредитами банков, "
-                "около половины инвестиций за счёт заёмных средств. Часть покупателей берёт ипотеку.",
-    keywords=["ипотека", "жилищное строительство", "проектное финансирование", "кредиты застройщиков"],
+                "около половины инвестиций за счёт заёмных средств. Часть покупателей берёт ипотеку. "
+                "Работаем с металлоконструкциями и стройматериалами.",
+    keywords=["ипотека", "жилищное строительство", "проектное финансирование",
+              "кредиты застройщиков", "металлоконструкции", "пошлины на металл"],
+    bank_client_id="U_9250",
     profile_json={
         "industry": "Жилищное строительство",
         "financing": "проектные кредиты банков, около половины инвестиций за счёт заёмных средств",
-        "sensitivities": [
-            {"topic": "ключевая ставка",
-             "mechanism": "Стоимость обслуживания проектных кредитов и доступность ипотеки "
-                          "для покупателей зависят от ставки."},
-        ],
     },
     updated_at=NOW,
 )
@@ -81,7 +87,7 @@ async def main() -> None:
     await init_rag()
 
     for company in (COMPANY, COMPANY_CREDIT):
-        print(f"\n===== {company.name} =====")
+        print(f"\n===== {company.name} (bank_client_id={company.bank_client_id}) =====")
         for n in SAMPLES:
             started = time.monotonic()
             try:
@@ -99,6 +105,12 @@ async def main() -> None:
             else:
                 print(f"  -> {m.score:.2f} [{m.category}] impact={m.impact} horizon={m.horizon}")
                 print(f"     {m.explanation}")
+                if m.actions:
+                    print(f"     Действия: {'; '.join(m.actions)}")
+                if m.alfa_view:
+                    print(f"     Позиция банка: {m.alfa_view}")
+                if m.sources:
+                    print(f"     Источники: {m.sources}")
 
 
 asyncio.run(main())
