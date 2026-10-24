@@ -118,7 +118,11 @@ export class NewsParserService {
   }
 
   async getAllMatchedNews() {
-    return await this.prisma.articleMatch.findMany();
+    return await this.prisma.articleMatch.findMany({
+      include: {
+        agentRun: { select: { steps: true, durationMs: true, model: true } },
+      },
+    });
   }
 
   /**
