@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from typing import Literal
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     llm_enrich_model: str = "qwen/qwen3.6-35b-a3b"
     llm_score_model: str = "qwen/qwen3.6-35b-a3b"
     llm_chat_model: str = "qwen/qwen3.6-35b-a3b"
-    llm_timeout: float = 90
+    llm_timeout: float = 180
     llm_concurrency: int = 2
     llm_min_interval: float = 0       # пауза между вызовами, сек
     llm_json_mode: bool = True
@@ -30,6 +30,19 @@ class Settings(BaseSettings):
     chat_history_limit: int = 10
     chat_max_tokens: int = 1200
     chat_article_limit: int = 4000
+
+    # RAG по аналитике Альфа-Банка
+    rag_enabled: bool = True
+    rag_dir: str = "data/alfa_pdfs"
+    rag_cache_dir: str = "data/alfa_cache"
+    ocr_backend: Literal["vlm", "easyocr"] = "vlm"
+    llm_ocr_model: str = "qwen/qwen3-vl-30b-a3b-instruct"
+    ocr_dpi: int = 150
+    ocr_max_tokens: int = 3000
+    rag_top_k: int = 3
+    rag_max_chars: int = 2400
+    rag_chunk_size: int = 900
+    rag_min_score: float = 6.0   # подбирается по скрипту try_rag
 
 
 settings = Settings()

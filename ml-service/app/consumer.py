@@ -44,6 +44,7 @@ from .llm import AnswerTruncated, BudgetExceeded, budget_pause_left
 from .registry import registry
 from .scoring import score_news
 from .settings import settings
+from .rag import init_rag
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 for _name in ("httpx", "httpx2", "httpcore", "httpcore2", "openai"):
@@ -352,6 +353,15 @@ async def news_loop(js) -> None:
                 await msg.nak(delay=30)
 
 
+async def news_after_rag(js) -> None:
+    """Новости ждут индекс, компании и чат работают сразу."""
+    try:
+        await init_rag()
+    except Exception:
+        log.exception("RAG init failed: новости будут оцениваться без аналитики банка")
+    await news_loop(js)
+
+
 # ---------------- запуск ----------------
 
 async def main() -> None:
@@ -361,7 +371,7 @@ async def main() -> None:
     try:
         await ready_subscribe(js)
         await asyncio.sleep(2)  # дать снимку компаний загрузиться до первых новостей
-        await asyncio.gather(enrich_loop(js), news_loop(js), chat_loop(js))
+        await asyncio.gather(enrich_loop(js), news_after_rag(js), chat_loop(js))
     finally:
         await nc.drain()
 
