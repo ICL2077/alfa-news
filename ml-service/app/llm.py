@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import base64
 
 from openai import (
     APIConnectionError,
@@ -173,5 +174,32 @@ async def ask_text(messages: list[dict], model: str, max_tokens: int) -> str:
         kwargs["extra_body"] = extra
 
     resp = await _create(**kwargs)
+    _log_usage(model, resp)
+    return _THINK.sub("", resp.choices[0].message.content or "").strip()
+
+@retry(
+    retry=retry_if_exception_type((APIConnectionError, RateLimitError, InternalServerError)),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=3, max=20),
+    reraise=True,
+)
+async def ask_vision(image_png: bytes, instruction: str, model: str, max_tokens: int) -> str:
+    """Текст по картинке (OCR). Instruct-модель не рассуждает, extra_body не нужен."""
+    data_url = "data:image/png;base64," + base64.b64encode(image_png).decode()
+    resp = await _create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }
+        ],
+        temperature=0,
+        max_tokens=max_tokens,
+        timeout=settings.llm_timeout,
+    )
     _log_usage(model, resp)
     return _THINK.sub("", resp.choices[0].message.content or "").strip()

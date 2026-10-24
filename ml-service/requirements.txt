@@ -3,3 +3,5 @@ pydantic>=2
 pydantic-settings
 openai
 tenacity
+pymupdf
+rank-bm25

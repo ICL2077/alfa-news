@@ -10,6 +10,7 @@ from contract.news_contract import NewsRawEvent
 from .llm import AnswerTruncated, BudgetExceeded
 from .scoring import score_news
 from .settings import settings
+from .rag import init_rag
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("scoring").setLevel(logging.DEBUG)
@@ -76,6 +77,8 @@ async def main() -> None:
         f"base_url={settings.llm_base_url}  threshold={settings.score_threshold}\n"
         f"extra_body={settings.llm_extra_body or '-'}"
     )
+
+    await init_rag()
 
     for company in (COMPANY, COMPANY_CREDIT):
         print(f"\n===== {company.name} =====")
