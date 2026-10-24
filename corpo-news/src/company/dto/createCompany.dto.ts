@@ -25,4 +25,9 @@ export class CreateCompanyDto {
   @IsString()
   @MaxLength(5000)
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  bankClientId?: string;
 }

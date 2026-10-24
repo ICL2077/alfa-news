@@ -24,6 +24,8 @@ export interface CompanyEnrichEvent {
   description: string | null;
   inn: string | null;
   region: string | null;
+
+  bankClientId: string | null;
 }
 
 export interface CompanyEnrichedEvent {
@@ -41,4 +43,6 @@ export interface CompanyReadyEvent {
   keywords: string[];
   profileJson: unknown;
   updatedAt: string;
+
+  bankClientId: string | null;
 }

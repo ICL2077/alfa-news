@@ -20,6 +20,7 @@ export class CompanyService {
           name: dto.name,
           ...(dto.description && { description: dto.description }),
           ...(dto.inn && { inn: dto.inn }),
+          bankClientId: dto.bankClientId ?? null,
         },
       });
 
@@ -29,6 +30,7 @@ export class CompanyService {
         description: company.description,
         inn: company.inn,
         region: company.region,
+        bankClientId: company.bankClientId ?? null,
       };
 
       await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);

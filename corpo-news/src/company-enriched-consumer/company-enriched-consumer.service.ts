@@ -79,6 +79,7 @@ export class CompanyEnrichedConsumerService
           region: company.region,
           profileJson: company.profileJson,
           updatedAt: company.updatedAt.toISOString(),
+          bankClientId: company.bankClientId,
         };
 
         await this.outbox.enqueue(trans, 'company.ready', companyReadyEvent);
