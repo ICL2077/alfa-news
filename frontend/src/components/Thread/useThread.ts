@@ -3,6 +3,12 @@ import { fetchMessages, messageEvents, openChat, sendMessage } from "../../api";
 import { analysisMessage, uid } from "../../chat";
 import type { Msg } from "../../chat";
 import type { ArticleMatch, ServerMessage } from "../../types";
+import {
+  canReconcilePendingSnapshot,
+  containsPendingUserMessage,
+  RefreshSequencer,
+  withoutMessage,
+} from "../../thread-sync.js";
 
 const toMessage = (message: ServerMessage): Msg => {
   const rawSteps = message.trace?.steps;
@@ -26,23 +32,30 @@ export function useThread(ownerId: string) {
   const opening = useRef(new Map<string, Promise<void>>());
   const activeMatches = useRef(new Set<string>());
   const chatIdsRef = useRef(new Map<string, string>());
+  const refreshSequence = useRef(new RefreshSequencer());
   const key = useCallback((matchId: string) => `${ownerId}:${matchId}`, [ownerId]);
 
-  const replaceMessages = useCallback((matchId: string, chatId: string, messages: ServerMessage[]) => {
+  const replaceMessages = useCallback((matchId: string, messages: ServerMessage[]) => {
     setThreads((current) => ({ ...current, [key(matchId)]: messages.map(toMessage) }));
     const pending = messages.some((message) => message.role === "USER" && message.status === "PENDING");
     if (pending) setPendingFor(matchId);
     else setPendingFor((current) => current === matchId ? undefined : current);
     if (messages.some((message) => message.status === "FAILED")) setErrorFor(matchId);
     else setErrorFor((current) => current === matchId ? undefined : current);
-    void chatId;
   }, [key]);
 
   const refresh = useCallback(async (matchId: string, chatId: string) => {
+    const requestVersion = refreshSequence.current.begin(matchId);
     try {
-      replaceMessages(matchId, chatId, await fetchMessages(chatId));
+      const messages = await fetchMessages(chatId);
+      if (refreshSequence.current.isCurrent(matchId, requestVersion)) {
+        replaceMessages(matchId, messages);
+        return { messages, applied: true };
+      }
+      return { messages, applied: false };
     } catch {
-      setErrorFor(matchId);
+      if (refreshSequence.current.isCurrent(matchId, requestVersion)) setErrorFor(matchId);
+      return null;
     }
   }, [replaceMessages]);
 
@@ -74,6 +87,7 @@ export function useThread(ownerId: string) {
 
   const close = useCallback((matchId: string) => {
     activeMatches.current.delete(matchId);
+    refreshSequence.current.invalidate(matchId);
     sources.current.get(matchId)?.close();
     sources.current.delete(matchId);
   }, []);
@@ -87,12 +101,13 @@ export function useThread(ownerId: string) {
     const optimistic: Msg = {
       id: uid(), role: "user", parts: [{ kind: "ai", text: content }], at: new Date().toISOString(),
     };
+    const optimisticId = optimistic.id;
     setThreads((current) => ({
       ...current,
       [key(matchId)]: [...(current[key(matchId)] ?? [analysisMessage(match)]), optimistic],
     }));
+    let chatId = chatIdsRef.current.get(matchId);
     try {
-      let chatId = chatIdsRef.current.get(matchId);
       if (!chatId) {
         const chat = await openChat(matchId);
         chatId = chat.id;
@@ -101,7 +116,27 @@ export function useThread(ownerId: string) {
       await sendMessage(chatId, content);
       await refresh(matchId, chatId);
     } catch {
-      setPendingFor(undefined);
+      const refreshed = chatId ? await refresh(matchId, chatId) : null;
+      const snapshot = refreshed?.messages ?? null;
+      const sentAt = Date.parse(optimistic.at) - 5_000;
+      const wasPersisted = snapshot?.some((message) =>
+        message.role === "USER" &&
+        message.content === content &&
+        Date.parse(message.createdAt) >= sentAt,
+      );
+      if (wasPersisted) return;
+
+      setThreads((current) => ({
+        ...current,
+        [key(matchId)]: withoutMessage(current[key(matchId)] ?? [], optimisticId),
+      }));
+      const canReconcilePending = canReconcilePendingSnapshot(Boolean(chatId), refreshed);
+      const hasPending = refreshed?.applied
+        ? containsPendingUserMessage(refreshed.messages)
+        : false;
+      setPendingFor((current) =>
+        current === matchId && canReconcilePending && !hasPending ? undefined : current,
+      );
       setErrorFor(matchId);
     }
   }, [key, pendingFor, refresh]);

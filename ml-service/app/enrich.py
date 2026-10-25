@@ -132,7 +132,10 @@ def _load_bank(event: CompanyEnrichEvent) -> dict | None:
         log.exception("данные банка недоступны, продолжаю без них")
         return None
     if bank is None:
-        log.warning("клиент %s не найден в CSV банка", event.bank_client_id)
+        if bank_data.is_ambiguous_company_uid(event.bank_client_id):
+            log.error("для bankClientId %s в CSV банка несколько конфликтующих профилей", event.bank_client_id)
+        else:
+            log.warning("клиент %s не найден в CSV банка", event.bank_client_id)
     else:
         log.info(
             "банк подтянут: clientId=%s okved=%r products=%s revenue=%s",
