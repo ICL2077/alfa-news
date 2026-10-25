@@ -42,6 +42,7 @@ PRODUCT_FLAGS = {
     "CL_PRODUCT_ZPP_MARK": "зарплатный проект",
 }
 LOAN_PRODUCT = "кредитные продукты"
+_ambiguous_company_uids: set[str] = set()
 
 LINK_COLS = {"fid": "SYNTHETIC_F", "uid": "SYNTHETIC_U",
              "city": "CITY_NAME", "rc": "RC_NAME"}
@@ -101,18 +102,43 @@ def _classify_city(raw: str) -> tuple[str, str] | None:
 
 
 def reset_cache() -> None:
+    _ambiguous_company_uids.clear()
     _companies.cache_clear()
+
+
+def _deduplicate_company_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, set[str]]:
+    """Collapse exact export repeats and exclude UIDs with conflicting profiles."""
+    uid_col = UID_COLS["uid"]
+    rows = df.drop_duplicates()
+    repeated = rows[uid_col].notna() & rows[uid_col].duplicated(keep=False)
+    ambiguous = set(rows.loc[repeated, uid_col].astype(str))
+
+    if ambiguous:
+        log.error(
+            "В CSV банка найдено конфликтующих профилей: %d UID; профили исключены",
+            len(ambiguous),
+        )
+        rows = rows.loc[~rows[uid_col].isin(ambiguous)]
+
+    return rows.drop_duplicates(uid_col), ambiguous
 
 
 @lru_cache(maxsize=1)
 def _companies() -> pd.DataFrame:
+    global _ambiguous_company_uids
     path = _file(settings.bank_uid_file)
     if not path.exists():
         log.warning("CSV банка не найден: %s", path)
         return pd.DataFrame()
     df = pd.read_csv(path, sep=settings.bank_csv_sep,
                      dtype={UID_COLS["uid"]: str}, low_memory=False)
-    return df.drop_duplicates(UID_COLS["uid"]).set_index(UID_COLS["uid"], drop=False)
+    df, _ambiguous_company_uids = _deduplicate_company_rows(df)
+    return df.set_index(UID_COLS["uid"], drop=False)
+
+
+def is_ambiguous_company_uid(uid: str) -> bool:
+    _companies()
+    return uid in _ambiguous_company_uids
 
 
 def _geo_summary(cities: Counter, regions: Counter,
@@ -261,7 +287,7 @@ def _counterparties(uid: str) -> dict | None:
 
 def bank_profile(uid: str) -> dict | None:
     df = _companies()
-    if df.empty or uid not in df.index:
+    if uid in _ambiguous_company_uids or df.empty or uid not in df.index:
         return None
     row = df.loc[uid]
 
