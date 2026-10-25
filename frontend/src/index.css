@@ -1,0 +1,476 @@
+:root {
+  --red: #ef3124;
+  --ink: #1a1a1a;
+  --mute: #6b6b6b;
+  --bg: #f4f4f4;
+  --card: #fff;
+  --line: #e3e3e3;
+  --risk: #ef3124;
+  --opp: #1f9d55;
+  --neu: #6b6b6b;
+  --ai: #7a3cff;
+  --bank: #ef3124;
+  --fact: #0b5cff;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f1f1f1;
+    --mute: #a0a0a0;
+    --bg: #121212;
+    --card: #1e1e1e;
+    --line: #333;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+h1 {
+  font-size: 1.8rem;
+  margin: 0.4rem 0 1rem;
+}
+h2 {
+  margin: 0.3rem 0;
+}
+h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+.top {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.8rem 1.5rem;
+  background: var(--red);
+  color: #fff;
+}
+.top .muted {
+  color: #ffe1de;
+}
+.logo {
+  font-weight: 800;
+  font-size: 1.15rem;
+}
+.page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+.muted {
+  color: var(--mute);
+  font-size: 0.9rem;
+}
+.row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 0.8rem 0;
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  padding: 1.4rem;
+  border: 0;
+  border-radius: 14px;
+  background: var(--red);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  font-size: 1.05rem;
+  margin-bottom: 1rem;
+}
+.entry strong {
+  font-size: 1.4rem;
+}
+.pill {
+  align-self: flex-start;
+  background: #fff;
+  color: var(--red);
+  border-radius: 99px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.widget {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 200px;
+}
+/* Каркас приложения */
+.app-layout {
+  display: flex;
+  height: 100vh; /* шапки больше нет */
+  overflow: hidden; /* Запрещаем скролл всей странице */
+  background: var(--bg);
+}
+
+/* Левая колонка */
+/* Левая колонка */
+.sidebar {
+  width: 340px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden; /* Важно: чтобы фильтры не вылезали */
+}
+
+.sidebar-top {
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  flex: none; /* Шапка не сжимается */
+}
+
+/* Фильтры в сайдбаре */
+.sidebar-top .filters {
+  flex-wrap: wrap; /* Разрешаем кнопкам переноситься на новую строку */
+  gap: 0.4rem;
+}
+.sidebar-top .filters .btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+/* Список новостей в сайдбаре скроллится и занимает всё оставшееся место */
+.sidebar-list {
+  flex: 1; /* Занимает всё свободное место */
+  min-height: 0; /* Важно для работы скролла внутри flex */
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.sidebar-list .card {
+  padding: 0.8rem;
+  gap: 0.25rem;
+}
+.sidebar-list .card strong {
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+/* Правая колонка */
+.main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* Стили для карточек в списке */
+.feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.grid.split {
+  grid-template-columns: 0.34fr 1fr;
+  column-gap: 1.2rem;
+  align-items: stretch;
+  height: calc(100vh - 260px);
+  min-height: 520px;
+}
+/* Лента по центру; в split колонка уже 760px, так что центрирование само превращается в прижатие влево */
+.col {
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+  min-width: 0;
+}
+.split .col {
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+.grid:not(.split) .filters {
+  justify-content: center;
+}
+.split .filters {
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+.split .filters .btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+}
+.backlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.profile {
+  margin: 0.4rem 0;
+}
+.profile summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.profile-body {
+  margin-top: 0.5rem;
+}
+.feed,
+.detail {
+  min-width: 0;
+}
+.card {
+  transition:
+    padding 0.4s var(--ease),
+    border-color 0.2s,
+    background-color 0.2s;
+}
+.card strong {
+  transition: font-size 0.4s var(--ease);
+}
+.card:hover:not(.sel) {
+  border-color: var(--line);
+}
+.grid:not(.split) .card {
+  padding: 1.2rem 1.4rem;
+}
+.grid:not(.split) .card strong {
+  font-size: 1.15rem;
+}
+.split .card {
+  padding: 0.7rem 0.9rem;
+}
+.split .card strong {
+  font-size: 0.95rem;
+}
+/* Превью сворачивается по высоте (трюк с grid-rows), а не пропадает рывком */
+.preview {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  line-height: 1.45;
+  max-width: 80ch;
+  transition:
+    grid-template-rows 0.4s var(--ease),
+    opacity 0.25s;
+}
+.preview > span {
+  overflow: hidden;
+  min-height: 0;
+}
+.split .preview {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* Карточка выезжает после того, как колонка успела раскрыться */
+.detail.in {
+  animation: detailIn 0.4s 0.15s var(--ease) both;
+}
+.detail.out {
+  animation: detailOut 0.2s ease both;
+  pointer-events: none;
+}
+@keyframes detailIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes detailOut {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+@media (max-width: 800px) {
+  .grid.split {
+    grid-template-columns: 1fr;
+  }
+  .split .col {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid,
+  .card,
+  .card strong,
+  .preview {
+    transition: none;
+  }
+  .detail.in,
+  .detail.out {
+    animation: none;
+  }
+}
+.feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.card {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 0.9rem;
+  cursor: pointer;
+}
+.card.sel {
+  border-color: var(--red);
+}
+.detail {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 1.4rem;
+}
+.block {
+  margin-top: 1.1rem;
+}
+.block p {
+  margin: 0.4rem 0;
+  line-height: 1.5;
+  max-width: 70ch;
+}
+.kind {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.kind.risk {
+  color: var(--risk);
+}
+.kind.opportunity {
+  color: var(--opp);
+}
+.kind.neutral {
+  color: var(--neu);
+}
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 99px;
+  color: #fff;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+}
+.badge.fact {
+  background: var(--fact);
+}
+.badge.bank {
+  background: var(--bank);
+}
+.badge.ai {
+  background: var(--ai);
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.tag {
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.85rem;
+}
+.btn {
+  background: var(--red);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+.btn.ghost {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--line);
+}
+.btn.ghost.on {
+  border-color: var(--red);
+  color: var(--red);
+}
+.btn:disabled {
+  opacity: 0.6;
+}
+.link {
+  background: none;
+  border: 0;
+  color: var(--red);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+input,
+select {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: inherit;
+}
+input {
+  flex: 1;
+}
+.error {
+  color: var(--risk);
+}
+.filters {
+  margin-top: 1.2rem;
+}
+:focus-visible {
+  outline: 3px solid var(--fact);
+  outline-offset: 2px;
+}
+
+/* Навигация и пользователь в сайдбаре */
+.main-content { overflow-y: auto; }
+.sidebar-brand { display: block; padding: 0; background: none; border: 0; font-family: inherit; font-weight: 800; font-size: 1.15rem; color: var(--red); margin-bottom: 0.8rem; text-align: left; cursor: pointer; }
+.sidebar-brand:hover { opacity: 0.8; }
+.nav { display: flex; flex-direction: column; gap: 0.25rem; }
+.nav-item { display: flex; align-items: center; gap: 0.6rem; width: 100%; padding: 0.55rem 0.7rem; background: transparent; color: inherit; border: 0; border-radius: 8px; font: inherit; text-align: left; cursor: pointer; transition: background-color 0.2s, color 0.2s; }
+.nav-item:hover:not(.on) { background: var(--bg); }
+.nav-item.on { background: var(--red); color: #fff; }
+.home-bar { justify-content: space-between; margin-top: 0; }
+.home-bar .row { margin: 0; }
+.sidebar-section { flex: none; padding: 0.8rem 1rem 0; }
+.sidebar-section .filters { margin: 0; flex-wrap: wrap; gap: 0.4rem; }
+.sidebar-section .filters .btn { padding: 0.35rem 0.7rem; font-size: 0.85rem; }
+.sidebar-spacer { flex: 1; min-height: 0; }
+.sidebar-user { flex: none; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.8rem 1rem; background: var(--card); border-top: 1px solid var(--line); }
+.sidebar-user .btn, .home-bar .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; }
+@media (prefers-reduced-motion: reduce) { .nav-item { transition: none; } }

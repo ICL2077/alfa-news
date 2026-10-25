@@ -117,9 +117,12 @@ export class NewsParserService {
     };
   }
 
-  async getAllMatchedNews() {
+  async getAllMatchedNews(companyId?: string) {
     return await this.prisma.articleMatch.findMany({
+      ...(companyId ? { where: { companyId } } : {}),
+      orderBy: { rawArticle: { pubDate: 'desc' } },
       include: {
+        rawArticle: true,
         agentRun: { select: { steps: true, durationMs: true, model: true } },
       },
     });

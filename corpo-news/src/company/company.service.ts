@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCompanyDto } from './dto/createCompany.dto';
 import { CompanyEnrichEvent } from 'contract/company.contract';
@@ -14,7 +14,7 @@ export class CompanyService {
   ) {}
 
   async createCompany(dto: CreateCompanyDto) {
-    await this.prisma.$transaction(async (trans) => {
+    return this.prisma.$transaction(async (trans) => {
       const company = await trans.company.create({
         data: {
           name: dto.name,
@@ -36,5 +36,11 @@ export class CompanyService {
       await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);
       return company;
     });
+  }
+
+  async getCompany(id: string) {
+    const company = await this.prisma.company.findUnique({ where: { id } });
+    if (!company) throw new NotFoundException('Company not found');
+    return company;
   }
 }
