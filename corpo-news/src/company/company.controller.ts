@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { CompanyService } from './company.service';
 import { CreateCompanyDto } from './dto/createCompany.dto';
 
@@ -8,6 +8,11 @@ export class CompanyController {
 
   @Post()
   async postCompany(@Body() dto: CreateCompanyDto) {
-    return await this.service.createCompany(dto);
+    return this.service.createCompany(dto);
+  }
+
+  @Get(':id')
+  async getCompany(@Param('id') id: string) {
+    return this.service.getCompany(id);
   }
 }
