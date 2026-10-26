@@ -404,7 +404,7 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
 
     usage: dict = {}
     with trace.step("llm_call", "Анализ новости моделью") as s:
-        result = await ask_json(SYSTEM, user, ScoreResult, settings.llm_score_model, usage=usage)  # type: ignore[arg-type]
+        result = await ask_json(SYSTEM, user, ScoreResult, settings.llm_score_model, usage=usage, background=True)  # type: ignore[arg-type]
         s.detail.update(model=settings.llm_score_model, **usage)
 
     sources = [{"type": "news", "ref": news.title, "url": news.link}]

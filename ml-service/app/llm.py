@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import base64
+from contextlib import nullcontext
 
 from openai import (
     APIConnectionError,
@@ -51,6 +52,7 @@ _client = AsyncOpenAI(
     max_retries=0,
 )
 _sem = asyncio.Semaphore(settings.llm_concurrency)
+_background_sem = asyncio.Semaphore(max(1, settings.llm_concurrency - 1))
 
 # Повторяем только временные сбои и невалидный JSON.
 # Ошибки авторизации, неверная модель, BudgetExceeded и AnswerTruncated повтором не лечатся.
@@ -84,24 +86,50 @@ async def _pace() -> None:
         _last_call = time.monotonic()
 
 
-async def _create(**kwargs):
+async def _create(*, background: bool = False, request_usage: dict | None = None, **kwargs):
     """Единая точка вызова API: пауза, семафор и распознавание ошибки бюджета."""
     global _budget_until
     if budget_pause_left() > 0:
         raise BudgetExceeded("LLM budget paused")
 
     try:
-        async with _sem:
-            if budget_pause_left() > 0:
-                raise BudgetExceeded("LLM budget paused")
-            await _pace()
-            return await _client.chat.completions.create(**kwargs)
+        queued_at = time.monotonic()
+        async with (_background_sem if background else nullcontext()):
+            async with _sem:
+                acquired_at = time.monotonic()
+                if budget_pause_left() > 0:
+                    raise BudgetExceeded("LLM budget paused")
+                await _pace()
+                request_at = time.monotonic()
+                try:
+                    return await _client.chat.completions.create(**kwargs)
+                finally:
+                    timing = {
+                        "queueMs": round((acquired_at - queued_at) * 1000),
+                        "rateWaitMs": round((request_at - acquired_at) * 1000),
+                        "apiMs": round((time.monotonic() - request_at) * 1000),
+                    }
+                    if request_usage is not None:
+                        request_usage.update(timing)
+                    log.info(
+                        "llm timing model=%s background=%s queue_ms=%d rate_wait_ms=%d api_ms=%d",
+                        kwargs.get("model"), background, timing["queueMs"],
+                        timing["rateWaitMs"], timing["apiMs"],
+                    )
     except (BadRequestError, RateLimitError, PermissionDeniedError) as e:
         if "budget" in str(e).lower():
             _budget_until = time.monotonic() + BUDGET_PAUSE
             log.error("LLM budget exceeded, pause %ds: %s", BUDGET_PAUSE, e)
             raise BudgetExceeded(str(e)) from e
         raise
+
+def _log_retry(state) -> None:
+    error = state.outcome.exception()
+    log.warning(
+        "llm retry attempt=%d wait_seconds=%.1f error=%s",
+        state.attempt_number, state.next_action.sleep, type(error).__name__,
+    )
+
 
 def _log_usage(model: str, resp) -> None:
     choice = resp.choices[0]
@@ -133,9 +161,10 @@ def _extra_body() -> dict | None:
     retry=retry_if_exception_type(_RETRYABLE),
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=2, min=3, max=30),
+    before_sleep=_log_retry,
     reraise=True,
 )
-async def ask_json(system: str, user: str, schema: type[BaseModel], model: str, usage: dict | None = None):
+async def ask_json(system: str, user: str, schema: type[BaseModel], model: str, usage: dict | None = None, *, background: bool = False):
     kwargs: dict = dict(
         model=model,
         messages=[
@@ -151,7 +180,7 @@ async def ask_json(system: str, user: str, schema: type[BaseModel], model: str, 
     if (extra := _extra_body()) is not None:
         kwargs["extra_body"] = extra
 
-    resp = await _create(**kwargs)
+    resp = await _create(background=background, request_usage=usage, **kwargs)
     _log_usage(model, resp)
 
     _fill_usage(usage, resp)
@@ -171,6 +200,7 @@ async def ask_json(system: str, user: str, schema: type[BaseModel], model: str, 
     retry=retry_if_exception_type((APIConnectionError, RateLimitError, InternalServerError)),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=2, min=3, max=20),
+    before_sleep=_log_retry,
     reraise=True,
 )
 async def ask_text(messages: list[dict], model: str, max_tokens: int, usage: dict | None = None) -> str:
@@ -185,7 +215,7 @@ async def ask_text(messages: list[dict], model: str, max_tokens: int, usage: dic
     if (extra := _extra_body()) is not None:
         kwargs["extra_body"] = extra
 
-    resp = await _create(**kwargs)
+    resp = await _create(request_usage=usage, **kwargs)
     _log_usage(model, resp)
     _fill_usage(usage, resp)
     if resp.choices[0].finish_reason == "length":
@@ -196,12 +226,14 @@ async def ask_text(messages: list[dict], model: str, max_tokens: int, usage: dic
     retry=retry_if_exception_type((APIConnectionError, RateLimitError, InternalServerError)),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=2, min=3, max=20),
+    before_sleep=_log_retry,
     reraise=True,
 )
 async def ask_vision(image_png: bytes, instruction: str, model: str, max_tokens: int) -> str:
     """Текст по картинке (OCR). Instruct-модель не рассуждает, extra_body не нужен."""
     data_url = "data:image/png;base64," + base64.b64encode(image_png).decode()
     resp = await _create(
+        background=True,
         model=model,
         messages=[
             {
