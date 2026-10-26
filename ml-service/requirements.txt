@@ -1,0 +1,8 @@
+nats-py<3
+pydantic>=2,<3
+pydantic-settings<3
+openai>=1,<2
+tenacity<10
+pymupdf>=1.24,<2
+rank-bm25==0.2.2
+pandas>=2,<3

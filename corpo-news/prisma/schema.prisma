@@ -1,0 +1,179 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+  generatedFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Сырые новости из RSS (общий поток, идет в фоне)
+model RawArticle {
+  id          String   @id @default(uuid())
+  guid        String   @unique 
+  title       String
+  link        String
+  description String?
+  fullText    String?  @db.Text
+  category    String?
+  pubDate     DateTime
+  processed   Boolean  @default(false) // обработал ли LLM
+
+  sendToStream Boolean @default(false) // отправлена ли новость в JetStream
+
+  createdAt   DateTime @default(now())
+
+  // Связь с результатами фильтрации
+  matches     ArticleMatch[]
+
+  @@index([pubDate])
+  @@map("raw_articles")
+}
+
+// transactional Outbox
+model OutboxEvent {
+  id        String    @id @default(uuid())
+  type      String    
+  payload   Json
+  sentAt    DateTime?
+  attempts  Int       @default(0)
+  lastError String?
+  createdAt DateTime  @default(now())
+
+  nextAttemptAt DateTime @default(now()) 
+
+  @@index([sentAt, createdAt])
+  @@map("outbox_events")
+}
+
+model Company {
+  id            String   @id @default(uuid())
+  inn           String?  @unique // опционально - мб через Dadata поддягивать
+  name          String   // будет вводится на сайте пользователем
+  description   String?  // будет вводится на сайте пользователем, может помочь LLm получше обогатить инфой "профиль" компании
+  okved         String?  // Из dadata
+  region        String?  // Из dadata
+  keywords      String[] @default([])// Это будет заполнятся LLM-кой
+  profileJson   Json?    // полный профиль: поставщики, конкуренты, риски (будет заполнятся LLm)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  bankClientId  String? @unique 
+
+  status        ProfileStatus @default(DRAFT) // статус профиля (пока LLm не соберет всю нужную инфу о компании профиль будет значится как DRAFT)
+
+  // Связь с отфильтрованными новостями
+  matches       ArticleMatch[]
+
+  @@index([bankClientId])
+  @@map("companies")
+}
+
+// Новости которые подошли компании с результатом скоринга(по важности)
+model ArticleMatch {
+  id            String   @id @default(uuid())
+  rawArticle    RawArticle @relation(fields: [rawArticleId], references: [id], onDelete: Cascade)
+  rawArticleId  String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId     String
+  category     String?
+  score         Float    // оценка важности 0-1 или 1-10
+  summary       String?  @db.Text // саммари от LLM
+  explanation   String?  @db.Text // почему это важно для компании
+  createdAt     DateTime @default(now())
+  impact  String?
+  horizon String?
+
+  actions       String[] @default([])
+  alfaView      String?  @db.Text
+  sources       Json?
+
+  agentRun AgentRun?
+
+  chat Chat? // на тему новости можно вступить в диалог с ии
+
+  // Одна новость может быть релевантна для нескольких компаний, но для одной — только один раз
+  @@unique([rawArticleId, companyId])
+  @@index([companyId, score])
+  @@map("article_matches")
+}
+
+// При открытии ArticleMatch у пользователя будет возможность начать диалог на тему этой новости с llm через чат
+model Chat {
+  id String @id @default(uuid())
+
+  article ArticleMatch @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId String @unique
+
+  messages Message[]
+
+  createdAt DateTime @default(now())
+}
+
+model Message {
+  id String @id @default(uuid())
+
+  content String @db.Text // текст сообщения
+
+  chat  Chat @relation(fields: [chatId], references: [id], onDelete: Cascade) 
+  chatId String
+
+  role MessageRole // тот кто отправил сообщение (user или ответ иишки)
+  status MessageStatus @default(PENDING) // статус обработки сообщения
+
+  agentRun AgentRun?
+
+  replyToId String? // id сообщения на которое отвечает llm
+
+  createdAt DateTime @default(now())
+
+  @@index([chatId, createdAt])
+  @@index([status, createdAt])
+  @@map("messages")
+}
+
+model AgentRun {
+  id         String       @id @default(uuid())
+  kind       AgentRunKind
+
+  articleMatch   ArticleMatch? @relation(fields: [articleMatchId], references: [id], onDelete: Cascade)
+  articleMatchId String?       @unique
+
+  message    Message?     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId  String?      @unique
+
+  model      String?
+  durationMs Int?
+  steps      Json         // массив шагов, формат в contract/agent.contract.ts
+  createdAt  DateTime     @default(now())
+
+  @@index([kind, createdAt])
+  @@map("agent_runs")
+}
+
+enum ProfileStatus {
+  DRAFT
+  READY
+}
+
+enum MessageRole {
+  USER
+  AI
+}
+
+enum MessageStatus {
+  PENDING
+  DONE
+  FAILED
+}
+
+enum AgentRunKind {
+  NEWS_MATCH
+  CHAT_ANSWER
+}

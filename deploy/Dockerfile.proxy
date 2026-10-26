@@ -1,0 +1,11 @@
+FROM git.birlab.ru/actions/base-images/node:22-alpine@sha256:fa1fb405a117ff1b1155dee7a493348d785e25de19794f4d474452884f874d7b AS frontend-build
+WORKDIR /app
+RUN corepack enable
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm lint && pnpm build
+
+FROM caddy:2.10-alpine
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=frontend-build /app/dist /srv
