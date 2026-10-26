@@ -18,11 +18,13 @@ class NewsConsumers:
 
     ML_RAW = "news_raw"                # Python читает news.raw.>
     NEST_PROCESSED = "news_processed"  # Nest читает news.processed.>
+    ML_BACKLOG = "news_backlog"        # Python читает news.backlog.>
 
 
 class NewsFilters:
     RAW = "news.raw.>"
     PROCESSED = "news.processed.>"
+    BACKLOG = "news.backlog.>"
 
 
 def subject_for_raw_news(article_id: str) -> str:
@@ -33,6 +35,10 @@ def subject_for_processed_news(company_id: str, article_id: str) -> str:
     # companyId обязателен в subject: иначе результаты для разных компаний
     # по одной новости считались бы дубликатами
     return f"news.processed.{company_id}.{article_id}"
+
+
+def subject_for_backlog_news(company_id: str, article_id: str) -> str:
+    return f"news.backlog.{company_id}.{article_id}"
 
 
 # ============================================================
@@ -55,6 +61,15 @@ class NewsRawEvent(_Event):
     category: Optional[str] = None
     pub_date: datetime = Field(..., alias="pubDate")
     published_at: datetime = Field(..., alias="publishedAt")
+
+
+class NewsBacklogEvent(NewsRawEvent):
+    """
+    Архивная новость для одной новой компании.
+    NestJS -> Python (news.backlog.<companyId>.<articleId>).
+    """
+
+    company_id: str = Field(..., alias="companyId")
 
 
 class NewsProcessedEvent(_Event):

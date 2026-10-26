@@ -12,16 +12,20 @@ export const newsStream = {
   filters: {
     mlConsumer: 'news.raw.>',
     nestConsumer: 'news.processed.>',
+    mlBacklogConsumer: 'news.backlog.>',
   },
   consumers: {
     nestNewsConsumer: 'news_processed',
     mlNewsConsumer: 'news_raw',
+    mlBacklogConsumer: 'news_backlog',
   },
 };
 
 export const subjectForRawNews = (articleId: string) => `news.raw.${articleId}`;
 export const subjectForProcessedNews = (companyId: string, articleId: string) =>
   `news.processed.${companyId}.${articleId}`;
+export const subjectForBacklogNews = (companyId: string, articleId: string) =>
+  `news.backlog.${companyId}.${articleId}`;
 
 // ============================================================
 // Events
@@ -40,6 +44,11 @@ export interface NewsRawEvent {
   pubDate: string;
   /** ISO, UTC */
   publishedAt: string;
+}
+
+/** Новость из архива, которую нужно оценить только для одной (новой) компании */
+export interface NewsBacklogEvent extends NewsRawEvent {
+  companyId: string;
 }
 
 export interface NewsProcessedEvent {

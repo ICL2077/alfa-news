@@ -23,7 +23,7 @@ export class NewsParserService {
     private outbox: OutboxService,
   ) {}
 
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async fetchAndStore() {
     const xml = await this.fetchXml(API_RSS_URL);
     const articles = this.parseRbcXml(xml);

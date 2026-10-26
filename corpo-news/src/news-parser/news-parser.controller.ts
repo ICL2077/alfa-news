@@ -11,7 +11,6 @@ export class NewsParserController {
     return { saved: saved.length };
   }
 
-  // тестовый временный роут для проверки работоспособности чата
   @Get('matchedArticles')
   async getAllMatches(@Query('companyId') companyId?: string) {
     return this.service.getAllMatchedNews(companyId);
