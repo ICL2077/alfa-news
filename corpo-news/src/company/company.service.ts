@@ -20,6 +20,16 @@ export class CompanyService {
   ) {}
 
   async createCompany(dto: CreateCompanyDto) {
+    // На демо-форме bankClientId одновременно служит ключом повторного входа.
+    // Возвращаем готовый профиль, чтобы повторная отправка не создавала дубль
+    // и не запускала повторное обогащение.
+    if (dto.bankClientId) {
+      const existing = await this.prisma.company.findUnique({
+        where: { bankClientId: dto.bankClientId },
+      });
+      if (existing) return existing;
+    }
+
     try {
       return await this.prisma.$transaction(async (trans) => {
         const company = await trans.company.create({
@@ -48,6 +58,15 @@ export class CompanyService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
+        // Защищаем повторный вход от гонки: два запроса могли одновременно
+        // не найти профиль, после чего один из них создал его первым.
+        if (dto.bankClientId) {
+          const existing = await this.prisma.company.findUnique({
+            where: { bankClientId: dto.bankClientId },
+          });
+          if (existing) return existing;
+        }
+
         throw new ConflictException(
           'Компания с таким ИНН или ID клиента банка уже существует',
         );
