@@ -14,38 +14,38 @@ export class CompanyService {
     private outbox: OutboxService,
   ) {}
 
- 
-async createCompany(dto: CreateCompanyDto) {
-  try {
-    return await this.prisma.$transaction(async (trans) => {
-      const company = await trans.company.create({
-        data: {
-          name: dto.name,
-          ...(dto.description && { description: dto.description }),
-          ...(dto.inn && { inn: dto.inn }),
-          bankClientId: dto.bankClientId ?? null,
-        },
+  async createCompany(dto: CreateCompanyDto) {
+    try {
+      return await this.prisma.$transaction(async (trans) => {
+        const company = await trans.company.create({
+          data: {
+            name: dto.name,
+            ...(dto.description && { description: dto.description }),
+            ...(dto.inn && { inn: dto.inn }),
+            bankClientId: dto.bankClientId ?? null,
+          },
+        });
+
+        const enrichEvent: CompanyEnrichEvent = {
+          companyId: company.id,
+          name: company.name,
+          description: company.description,
+          inn: company.inn,
+          region: company.region,
+          bankClientId: company.bankClientId ?? null,
+        };
+
+        await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);
+        return company;
       });
-
-      const enrichEvent: CompanyEnrichEvent = {
-        companyId: company.id,
-        name: company.name,
-        description: company.description,
-        inn: company.inn,
-        region: company.region,
-        bankClientId: company.bankClientId ?? null,
-      };
-
-      await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);
-      return company;
-    });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
-      throw new ConflictException('Компания с таким ИНН уже существует');
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Компания с таким ИНН уже существует');
+      }
+      throw error;
     }
-    throw error;
   }
-}}
+}
