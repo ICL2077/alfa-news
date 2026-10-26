@@ -2,7 +2,7 @@ name: Build and deploy demo
 
 on:
     push:
-        branches: [main, 'fix/**']
+        branches: [main, 'fix/**', 'demo/**']
     pull_request:
         branches: [main]
 
