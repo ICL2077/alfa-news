@@ -52,6 +52,9 @@ class ChatMatch(_Event):
     horizon: Optional[str] = None
     summary: Optional[str] = None
     explanation: Optional[str] = None
+    actions: list[str] = Field(default_factory=list)
+    alfa_view: Optional[str] = Field(None, alias="alfaView")
+    sources: list[dict] | None = None
 
 
 class ChatContext(_Event):

@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+**/__pycache__/
+*.py[cod]
+.worktrees/
+node_modules/
+.venv/
+deploy/data/
+deploy/credentials.local
+deploy/*probe.env
+deploy/smoke.env
+
+# Local development-assistant instructions and state
+.agents/
+.claude/
+.windsurf/
+.codex/
+skills-lock.json
+AGENTS.md
+CLAUDE.md
+GEMINI.md

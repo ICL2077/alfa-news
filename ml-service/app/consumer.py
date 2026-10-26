@@ -117,7 +117,7 @@ async def handle_enrich(js, msg) -> None:
         subject_for_enriched(event.company_id),
         out.model_dump_json(by_alias=True).encode(),
         headers={
-            "Nats-Msg-Id": f"{event.company_id}:enriched:{out.enriched_at.isoformat()}"
+            "Nats-Msg-Id": f"enriched:{msg.headers.get('Nats-Msg-Id') if msg.headers and msg.headers.get('Nats-Msg-Id') else msg.metadata.sequence.stream}"
         },
     )
 
@@ -138,8 +138,8 @@ async def enrich_loop(js) -> None:
         if await _wait_budget():
             continue
         try:
-            msgs = await psub.fetch(batch=3, timeout=5)
-        except NatsTimeout:
+            msgs = await psub.fetch(batch=1, timeout=5)
+        except (NatsTimeout, asyncio.TimeoutError):
             continue
 
         for msg in msgs:
@@ -178,6 +178,11 @@ async def ready_subscribe(js):
             ack_policy=AckPolicy.NONE,
         ),
     )
+    while True:
+        info = await sub.consumer_info()
+        if info.num_pending == 0 and sub.pending_msgs == 0:
+            break
+        await asyncio.sleep(0.05)
     log.info("subscribed %s (snapshot + live)", CompanyFilters.READY)
     return sub
 
@@ -201,6 +206,10 @@ async def _publish_processed(js, news: NewsRawEvent, company, res) -> None:
         impact=res.impact,
         horizon=res.horizon,
         model=res.model,
+        trace=res.trace,
+        actions=res.actions or [],
+        alfa_view=res.alfa_view or "",
+        sources=res.sources or [],
         processed_at=datetime.now(timezone.utc),
     )
     await js.publish(
@@ -220,6 +229,10 @@ async def handle_news(js, msg) -> None:
         return
 
     companies = registry.all()
+    if not companies:
+        await msg.nak(delay=30)
+        log.info("news deferred: no ready companies")
+        return
 
     # пока идут вызовы LLM, продлеваем ожидание подтверждения
     hb = asyncio.create_task(keepalive(msg))
@@ -276,11 +289,14 @@ async def news_loop(js) -> None:
     log.info("listening %s", NewsFilters.RAW)
 
     while True:
+        if len(registry) == 0:
+            await asyncio.sleep(1)
+            continue
         if await _wait_budget():
             continue
         try:
-            msgs = await psub.fetch(batch=3, timeout=5)
-        except NatsTimeout:
+            msgs = await psub.fetch(batch=1, timeout=5)
+        except (NatsTimeout, asyncio.TimeoutError):
             continue
 
         for msg in msgs:
@@ -354,7 +370,7 @@ async def backlog_news_loop(js) -> None:
             continue
         try:
             msgs = await psub.fetch(batch=5, timeout=5)
-        except NatsTimeout:
+        except (NatsTimeout, asyncio.TimeoutError):
             continue
 
         hbs = [asyncio.create_task(keepalive(m)) for m in msgs]
@@ -410,7 +426,13 @@ async def handle_chat(js, msg) -> None:
 
     hb = asyncio.create_task(keepalive(msg))
     try:
-        answer, trace = await answer_question(req)
+        remaining = 150 - (datetime.now(timezone.utc) - req.requested_at).total_seconds()
+        if remaining <= 0:
+            await _respond(js, req, error="Время ожидания ответа истекло, повторите вопрос")
+            await msg.ack()
+            return
+        async with asyncio.timeout(min(120, remaining)):
+            answer, trace = await answer_question(req)
     except BudgetExceeded:
         # пользователь ждёт, поэтому отвечаем ошибкой сразу, а не откладываем на 15 минут
         await _respond(js, req, error="Дневной лимит ИИ исчерпан, попробуйте позже")
@@ -432,7 +454,7 @@ async def handle_chat(js, msg) -> None:
     finally:
         hb.cancel()
 
-    await _respond(js, req, answer=answer, model=settings.llm_chat_model, trace=trace)
+    await _respond(js, req, answer=answer, model="stub" if settings.llm_mode == "stub" else settings.llm_chat_model, trace=trace)
     await msg.ack()
     log.info("chat %s: answered (%d chars)", req.chat_id[:8], len(answer))
 
@@ -447,8 +469,8 @@ async def chat_loop(js) -> None:
         if await _wait_budget():
             continue
         try:
-            msgs = await psub.fetch(batch=2, timeout=5)
-        except NatsTimeout:
+            msgs = await psub.fetch(batch=1, timeout=5)
+        except (NatsTimeout, asyncio.TimeoutError):
             continue
         for msg in msgs:
             try:
@@ -466,7 +488,6 @@ async def main() -> None:
     log.info("connected to %s", settings.nats_url)
     try:
         await ready_subscribe(js)
-        await asyncio.sleep(2)  # дать снимку компаний загрузиться до первых новостей
         await asyncio.gather(
             enrich_loop(js),
             news_after_rag(js),

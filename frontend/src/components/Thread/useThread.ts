@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchMessages, messageEvents, openChat, sendMessage } from '../../api';
 import { analysisMessage, uid } from '../../chat';
 import type { Msg } from '../../chat';
@@ -32,6 +32,8 @@ export function useThread(ownerId: string) {
     const [threads, setThreads] = useState<Record<string, Msg[]>>({});
     const [pendingFor, setPendingFor] = useState<string>();
     const [errorFor, setErrorFor] = useState<string>();
+    const sending = useRef(new Set<string>());
+    const polling = useRef(new Map<string, ReturnType<typeof setInterval>>());
     const sources = useRef(new Map<string, EventSource>());
     const opening = useRef(new Map<string, Promise<void>>());
     const activeMatches = useRef(new Set<string>());
@@ -47,7 +49,11 @@ export function useThread(ownerId: string) {
             );
             if (pending) setPendingFor(matchId);
             else setPendingFor((current) => (current === matchId ? undefined : current));
-            if (messages.some((message) => message.status === 'FAILED')) setErrorFor(matchId);
+            if (
+                [...messages].reverse().find((message) => message.role === 'USER')?.status ===
+                'FAILED'
+            )
+                setErrorFor(matchId);
             else setErrorFor((current) => (current === matchId ? undefined : current));
         },
         [key],
@@ -58,7 +64,10 @@ export function useThread(ownerId: string) {
             const requestVersion = refreshSequence.current.begin(matchId);
             try {
                 const messages = await fetchMessages(chatId);
-                if (refreshSequence.current.isCurrent(matchId, requestVersion)) {
+                if (
+                    refreshSequence.current.isCurrent(matchId, requestVersion) &&
+                    !sending.current.has(matchId)
+                ) {
                     replaceMessages(matchId, messages);
                     return { messages, applied: true };
                 }
@@ -96,8 +105,14 @@ export function useThread(ownerId: string) {
                         void refresh(matchId, chat.id);
                     });
                     source.onerror = () => {
-                        /* EventSource reconnects; onopen reloads missed messages. */
+                        void refresh(matchId, chat.id);
                     };
+                    polling.current.set(
+                        matchId,
+                        setInterval(() => {
+                            void refresh(matchId, chat.id);
+                        }, 5000),
+                    );
                     await refresh(matchId, chat.id);
                 } catch {
                     setErrorFor(matchId);
@@ -118,13 +133,29 @@ export function useThread(ownerId: string) {
         refreshSequence.current.invalidate(matchId);
         sources.current.get(matchId)?.close();
         sources.current.delete(matchId);
+        clearInterval(polling.current.get(matchId));
+        polling.current.delete(matchId);
+    }, []);
+
+    useEffect(() => {
+        const connections = sources.current;
+        const timers = polling.current;
+        const active = activeMatches.current;
+        return () => {
+            active.clear();
+            connections.forEach((source) => source.close());
+            connections.clear();
+            timers.forEach((timer) => clearInterval(timer));
+            timers.clear();
+        };
     }, []);
 
     const send = useCallback(
         async (match: ArticleMatch, text: string) => {
             const content = text.trim();
-            if (!content || pendingFor) return;
+            if (!content || pendingFor || sending.current.size) return;
             const matchId = match.id;
+            sending.current.add(matchId);
             setErrorFor(undefined);
             setPendingFor(matchId);
             const optimistic: Msg = {
@@ -134,7 +165,6 @@ export function useThread(ownerId: string) {
                 at: new Date().toISOString(),
             };
             const optimisticId = optimistic.id;
-            // В threads храним только серверные сообщения; аналитика добавляется в messages()
             setThreads((current) => ({
                 ...current,
                 [key(matchId)]: [...(current[key(matchId)] ?? []), optimistic],
@@ -147,8 +177,10 @@ export function useThread(ownerId: string) {
                     chatIdsRef.current.set(matchId, chat.id);
                 }
                 await sendMessage(chatId, content);
+                sending.current.delete(matchId);
                 await refresh(matchId, chatId);
             } catch {
+                sending.current.delete(matchId);
                 const refreshed = chatId ? await refresh(matchId, chatId) : null;
                 const snapshot = refreshed?.messages ?? null;
                 const sentAt = Date.parse(optimistic.at) - 5_000;
@@ -178,11 +210,10 @@ export function useThread(ownerId: string) {
     );
 
     return {
-        // Аналитическое сообщение живёт только на фронте и всегда стоит первым
-        messages: (match: ArticleMatch) => [
-            analysisMessage(match),
-            ...(threads[key(match.id)] ?? []),
-        ],
+        messages: (match: ArticleMatch) => {
+            const saved = threads[key(match.id)];
+            return [analysisMessage(match), ...(saved ?? [])];
+        },
         open,
         close,
         send,

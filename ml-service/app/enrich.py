@@ -114,7 +114,7 @@ def _clean_keywords(items: list[str], limit: int) -> list[str]:
 
 def _stub(event: CompanyEnrichEvent) -> EnrichResult:
     text = f"{event.name} {event.description or ''}".lower()
-    words = sorted(set(re.findall(r"[a-zа-яё]{4,}", text)))[:10]
+    words = sorted(set(re.findall(r"[a-zа-яё]{4,}", text)))[:10] or [event.name.lower()]
     return EnrichResult(
         industry="stub",
         keywords=words,

@@ -6,6 +6,7 @@ import {
   OnApplicationBootstrap,
   OnModuleDestroy,
 } from '@nestjs/common';
+import { isAgentTrace } from 'contract/agent.contract';
 import { ChatService } from './chat.service';
 import { ChatResponseEvent, chatStream } from 'contract/chat.contract';
 
@@ -57,7 +58,14 @@ export class ChatMessagesConsumer
       return msg.term();
     }
 
-    if (!event.chatId || !event.replyToId) {
+    if (
+      !event?.chatId ||
+      !event?.replyToId ||
+      (event.answer != null &&
+        (typeof event.answer !== 'string' || event.answer.length > 20000)) ||
+      (event.error != null && typeof event.error !== 'string') ||
+      (event.trace != null && !isAgentTrace(event.trace))
+    ) {
       this.logger.warn(`invalid chat response message`);
       return msg.term();
     }

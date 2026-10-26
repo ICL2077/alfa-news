@@ -51,6 +51,14 @@ export interface NewsBacklogEvent extends NewsRawEvent {
   companyId: string;
 }
 
+export interface AnalysisSource {
+  type: 'news' | 'alfa';
+  ref: string;
+  url?: string;
+  page?: number;
+  quote?: string;
+}
+
 export interface NewsProcessedEvent {
   articleId: string;
   companyId: string;
@@ -63,6 +71,9 @@ export interface NewsProcessedEvent {
   horizon?: string | null;
 
   trace?: AgentTrace | null;
+  actions?: string[];
+  alfaView?: string;
+  sources?: AnalysisSource[];
 
   /** ISO, UTC */
   processedAt: string;

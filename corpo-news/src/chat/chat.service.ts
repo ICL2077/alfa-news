@@ -39,6 +39,7 @@ export class ChatService {
   }
 
   async getMessagesFromChat(id: string) {
+    await this.ensureChatExists(id);
     const messages = await this.prisma.message.findMany({
       where: { chatId: id },
       orderBy: { createdAt: 'asc' },
@@ -55,9 +56,20 @@ export class ChatService {
         ? {
             steps: agentRun.steps as unknown as AgentStep[],
             durationMs: agentRun.durationMs ?? 0,
+            model: agentRun.model,
           }
         : null,
     }));
+  }
+
+  async ensureChatExists(id: string) {
+    if (
+      !(await this.prisma.chat.findUnique({
+        where: { id },
+        select: { id: true },
+      }))
+    )
+      throw new NotFoundException('Chat not found');
   }
 
   // сохраняем отправленное сообщение и отправляем его к llm за ответом
@@ -128,6 +140,9 @@ export class ChatService {
             horizon: chatArticle.horizon,
             summary: chatArticle.summary,
             explanation: chatArticle.explanation,
+            actions: chatArticle.actions,
+            alfaView: chatArticle.alfaView,
+            sources: chatArticle.sources,
           },
         },
         requestedAt: new Date().toISOString(),
@@ -185,7 +200,7 @@ export class ChatService {
           data: {
             kind: 'CHAT_ANSWER',
             messageId: answer.id,
-            model: null,
+            model: e.model ?? null,
             durationMs: e.trace.durationMs,
             steps: e.trace.steps as unknown as Prisma.InputJsonValue,
           },

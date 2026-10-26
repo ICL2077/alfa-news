@@ -1,6 +1,6 @@
 import type { ArticleMatch, Company, CompanyInput, ServerMessage } from './types';
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+const BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${BASE}${path}`, {
@@ -9,6 +9,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
             ...(init?.body ? { 'content-type': 'application/json' } : {}),
             ...init?.headers,
         },
+        credentials: 'same-origin',
     });
     if (!response.ok) {
         const detail = await response.text().catch(() => '');
@@ -38,5 +39,7 @@ export const sendMessage = (chatId: string, content: string) =>
     });
 
 export function messageEvents(chatId: string) {
-    return new EventSource(`${BASE}/chat/${encodeURIComponent(chatId)}/events`);
+    return new EventSource(`${BASE}/chat/${encodeURIComponent(chatId)}/events`, {
+        withCredentials: true,
+    });
 }

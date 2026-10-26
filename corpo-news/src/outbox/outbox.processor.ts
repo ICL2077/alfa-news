@@ -51,7 +51,9 @@ export class OutboxPublisher {
     this.running = true;
 
     try {
-      for (const ev of await this.claim()) {
+      for (let i = 0; i < 20; i++) {
+        const [ev] = await this.claim();
+        if (!ev) break;
         try {
           const subject = subjectBuilders(ev.type, ev.payload);
           if (!subject) throw new Error(`unknown outbox type: ${ev.type}`);
@@ -81,13 +83,13 @@ export class OutboxPublisher {
       // берем еще не отправленные в JS сообщения и у которых наступило время попытки (меньше или равно сейчас)
       where: { sentAt: null, nextAttemptAt: { lte: new Date() } },
       orderBy: { createdAt: 'asc' },
-      take: 20,
+      take: 1,
     });
 
     const claimed: Claimed[] = [];
 
     for (const event of candidates) {
-      const res = await this.prisma.outboxEvent.update({
+      const res = await this.prisma.outboxEvent.updateMany({
         where: {
           id: event.id,
           sentAt: null,
@@ -99,12 +101,12 @@ export class OutboxPublisher {
         },
       });
 
-      if (res) {
+      if (res.count === 1) {
         claimed.push({
-          id: res.id,
-          type: res.type,
-          payload: res.payload,
-          attempts: res.attempts,
+          id: event.id,
+          type: event.type,
+          payload: event.payload,
+          attempts: event.attempts + 1,
         });
       }
     }

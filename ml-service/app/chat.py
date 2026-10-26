@@ -1,3 +1,5 @@
+import json
+
 from contract.chat_contract import ChatRequestEvent
 
 from .llm import ask_text
@@ -23,7 +25,10 @@ _PROMPT = """Ты персональный аналитик клиента. Кл
 - Давай практичные выводы: что это значит для бизнеса клиента, на что обратить внимание,
   какие шаги стоит рассмотреть. Не давай юридических и инвестиционных гарантий.
 - Если вопрос не связан с новостью и бизнесом клиента, скажи, что можешь обсуждать только
-  эту новость и её влияние."""
+  эту новость и её влияние.
+- Позиция банка — только отдельное поле alfa_view и подтверждающие цитаты в sources.
+  Не приписывай банку собственные выводы. Если поля нет, сообщи об отсутствии позиции банка.
+- Не придумывай ссылки и страницы. Источники используй только из переданного контекста."""
 
 
 def _context(req: ChatRequestEvent) -> str:
@@ -34,13 +39,16 @@ def _context(req: ChatRequestEvent) -> str:
         f"Оценка важности: {m.score:.2f}",
         f"Категория: {m.category or '-'}; влияние: {m.impact or '-'}; горизонт: {m.horizon or '-'}",
         f"Суть: {m.summary or '-'}",
-        f"Анализ для клиента: {m.explanation or '-'}",
+        f"Анализ для клиента (вывод модели): {m.explanation or '-'}",
+        f"Позиция банка: {m.alfa_view or 'не найдена'}",
+        f"Возможные действия: {json.dumps(m.actions, ensure_ascii=False)}",
+        f"Источники: {json.dumps(m.sources or [], ensure_ascii=False)}",
     ]
     return (
         # у ChatCompany те же поля name, description, profile_json, что нужны _profile_block
         f"<company>\n{_profile_block(c.company)}\n</company>\n"  # type: ignore[arg-type]
         f"<article>\nЗаголовок: {a.title}\nДата: {a.pub_date or '-'}\n"
-        f"Текст: {text[: settings.chat_article_limit]}\n</article>\n"
+        f"Первоисточник: {a.link}\nТекст: {text[: settings.chat_article_limit]}\n</article>\n"
         "<analysis>\n" + "\n".join(analysis) + "\n</analysis>"
     )
 
