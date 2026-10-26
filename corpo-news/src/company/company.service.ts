@@ -2,7 +2,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCompanyDto } from './dto/createCompany.dto';
 import { CompanyEnrichEvent } from 'contract/company.contract';
 import { OutboxService } from 'src/outbox/outbox.service';
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from 'generated/prisma';
 
 @Injectable()
@@ -47,5 +52,11 @@ export class CompanyService {
       }
       throw error;
     }
+  }
+
+  async getCompany(id: string) {
+    const company = await this.prisma.company.findUnique({ where: { id } });
+    if (!company) throw new NotFoundException('Company not found');
+    return company;
   }
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get, Post, Query } from '@nestjs/common';
 import { NewsParserService } from './news-parser.service';
 
 @Controller('news')
@@ -13,7 +13,7 @@ export class NewsParserController {
 
   // тестовый временный роут для проверки работоспособности чата
   @Get('matchedArticles')
-  async getAllMatches() {
-    return this.service.getAllMatchedNews();
+  async getAllMatches(@Query('companyId') companyId?: string) {
+    return this.service.getAllMatchedNews(companyId);
   }
 }
