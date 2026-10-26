@@ -64,7 +64,7 @@ model Company {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  bankClientId  String? 
+  bankClientId  String? @unique 
 
   status        ProfileStatus @default(DRAFT) // статус профиля (пока LLm не соберет всю нужную инфу о компании профиль будет значится как DRAFT)
 

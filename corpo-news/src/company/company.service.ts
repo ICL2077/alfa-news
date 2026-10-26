@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCompanyDto } from './dto/createCompany.dto';
 import { CompanyEnrichEvent } from 'contract/company.contract';
 import { OutboxService } from 'src/outbox/outbox.service';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { Prisma } from 'generated/prisma';
 
 @Injectable()
 export class CompanyService {
@@ -13,8 +14,10 @@ export class CompanyService {
     private outbox: OutboxService,
   ) {}
 
-  async createCompany(dto: CreateCompanyDto) {
-    await this.prisma.$transaction(async (trans) => {
+ 
+async createCompany(dto: CreateCompanyDto) {
+  try {
+    return await this.prisma.$transaction(async (trans) => {
       const company = await trans.company.create({
         data: {
           name: dto.name,
@@ -36,5 +39,13 @@ export class CompanyService {
       await this.outbox.enqueue(trans, 'company.enrich', enrichEvent);
       return company;
     });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new ConflictException('Компания с таким ИНН уже существует');
+    }
+    throw error;
   }
-}
+}}
