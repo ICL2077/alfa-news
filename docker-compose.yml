@@ -1,0 +1,110 @@
+services:
+    postgres:
+        image: postgres:16-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-news}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-news}
+            POSTGRES_DB: ${POSTGRES_DB:-news}
+        ports:
+            - '127.0.0.1:5432:5432'
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-news}']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    nats:
+        image: nats:2.10-alpine
+        restart: unless-stopped
+        command: ['-js', '-sd', '/data', '-m', '8222']
+        ports:
+            - '127.0.0.1:4222:4222'
+            - '127.0.0.1:8222:8222'
+        volumes:
+            - nats_data:/data
+        healthcheck:
+            test: ['CMD', 'wget', '-qO-', 'http://localhost:8222/healthz']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    backend:
+        build:
+            context: ./corpo-news
+            dockerfile: Dockerfile
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+            nats:
+                condition: service_healthy
+        environment:
+            DATABASE_URL: postgresql://${POSTGRES_USER:-news}:${POSTGRES_PASSWORD:-news}@postgres:5432/${POSTGRES_DB:-news}
+            NATS_URL: nats://nats:4222
+            PORT: 3000
+            NEWS_IMPORT_ENABLED: ${NEWS_IMPORT_ENABLED:-true}
+        ports:
+            - '127.0.0.1:3000:3000'
+        healthcheck:
+            test: ['CMD', 'node', '-e', 'const s=require("net").connect(3000,"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1));setTimeout(()=>process.exit(1),2000)']
+            interval: 5s
+            timeout: 3s
+            retries: 24
+            start_period: 30s
+
+
+    ml-service:
+        build:
+            context: ./ml-service
+        restart: unless-stopped
+        depends_on:
+            nats:
+                condition: service_healthy
+            backend:
+                condition: service_healthy
+        environment:
+            NATS_URL: nats://nats:4222
+            HTTP_PROXY: ${HTTP_PROXY:-}
+            HTTPS_PROXY: ${HTTPS_PROXY:-}
+            NO_PROXY: localhost,127.0.0.1,nats,postgres,backend
+            LLM_MODE: ${LLM_MODE:-stub}
+            LLM_BASE_URL: ${LLM_BASE_URL:-https://changellenge.up.railway.app/v1}
+            LLM_API_KEY: ${LLM_API_KEY:-}
+            LLM_ENRICH_MODEL: ${LLM_ENRICH_MODEL:-qwen/qwen3.6-35b-a3b}
+            LLM_SCORE_MODEL: ${LLM_SCORE_MODEL:-qwen/qwen3.6-35b-a3b}
+            LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-qwen/qwen3.6-35b-a3b}
+            LLM_EXTRA_BODY: ${LLM_EXTRA_BODY:-}
+            LLM_MIN_INTERVAL: ${LLM_MIN_INTERVAL:-1}
+            LLM_CONCURRENCY: ${LLM_CONCURRENCY:-2}
+            RAG_ENABLED: ${RAG_ENABLED:-false}
+            OCR_CONCURRENCY: ${OCR_CONCURRENCY:-2}
+            OCR_BACKEND: ${OCR_BACKEND:-vlm}
+            RAG_MIN_SCORE: ${RAG_MIN_SCORE:-6.5}
+            BANK_CSV_DIR: /app/data/csv
+            RAG_DIR: /app/data/alfa_pdfs
+        volumes:
+            - ${BANK_CSV_HOST_DIR:-./deploy/data/csv}:/app/data/csv:ro
+            - ${BANK_PDF_HOST_DIR:-./deploy/data/alfa_pdfs}:/app/data/alfa_pdfs:ro
+            - bank_cache:/app/data/bank_cache
+            - rag_cache:/app/data/alfa_cache
+
+    proxy:
+        build:
+            context: .
+            dockerfile: deploy/Dockerfile.proxy
+        restart: unless-stopped
+        depends_on:
+            - backend
+        ports:
+            - '127.0.0.1:8080:80'
+        volumes:
+            - ./deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+
+volumes:
+    postgres_data:
+    nats_data:
+    bank_cache:
+    rag_cache:

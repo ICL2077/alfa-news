@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.env
+uploads
+*.log
+npm-debug.log*
+.agents
+.claude
+.windsurf
+.codex
+skills-lock.json
+AGENTS.md
+CLAUDE.md
+GEMINI.md
