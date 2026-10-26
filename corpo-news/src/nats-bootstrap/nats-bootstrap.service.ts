@@ -29,6 +29,12 @@ const streamSchemas = [
         filter: newsStream.filters.mlConsumer,
         ackWait: 5 * 60 * 1000,
       },
+      // python: архивные новости для только что готовой компании (оцениваются только для неё)
+      {
+        name: newsStream.consumers.mlBacklogConsumer,
+        filter: newsStream.filters.mlBacklogConsumer,
+        ackWait: 2 * 60 * 1000,
+      },
     ] as Consumer[],
   },
   // описываем поток компаний

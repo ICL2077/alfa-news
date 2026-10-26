@@ -10,4 +10,16 @@ export class OutboxService {
   ) {
     await trans.outboxEvent.create({ data: { type, payload: payload as any } });
   }
+
+  /** Пакетная вставка: одним запросом вместо N create */
+  async enqueueMany(
+    trans: Prisma.TransactionClient,
+    type: string,
+    payloads: object[],
+  ) {
+    if (payloads.length === 0) return;
+    await trans.outboxEvent.createMany({
+      data: payloads.map((payload) => ({ type, payload: payload as any })),
+    });
+  }
 }

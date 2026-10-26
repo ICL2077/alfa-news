@@ -2,19 +2,30 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { NatsJetStreamService } from '@app/nats-jet-stream';
 import { subjectForEnrich, subjectForReady } from 'contract/company.contract';
-import { subjectForRawNews } from 'contract/news.contract';
+import {
+  subjectForBacklogNews,
+  subjectForRawNews,
+} from 'contract/news.contract';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { subjectForChatRequest } from 'contract/chat.contract';
 
-function subjectBuilders(type: string, payload: any) {
-  const subjects = {
-    'company.enrich': subjectForEnrich(payload.companyId),
-    'company.ready': subjectForReady(payload.companyId),
-    'news.raw': subjectForRawNews(payload.id),
-    'chat.request': subjectForChatRequest(payload.chatId, payload.messageId),
-  };
-
-  return subjects[type];
+function subjectBuilders(type: string, payload: any): string | undefined {
+  // switch вместо объекта: subject строится только для нужного типа,
+  // у остальных событий нет полей вроде payload.companyId
+  switch (type) {
+    case 'company.enrich':
+      return subjectForEnrich(payload.companyId);
+    case 'company.ready':
+      return subjectForReady(payload.companyId);
+    case 'news.raw':
+      return subjectForRawNews(payload.id);
+    case 'news.backlog':
+      return subjectForBacklogNews(payload.companyId, payload.id);
+    case 'chat.request':
+      return subjectForChatRequest(payload.chatId, payload.messageId);
+    default:
+      return undefined;
+  }
 }
 
 interface Claimed {

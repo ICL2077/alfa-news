@@ -32,6 +32,7 @@ from contract.company_contract import (
 )
 from contract.news_contract import (
     NEWS_STREAM,
+    NewsBacklogEvent,
     NewsConsumers,
     NewsFilters,
     NewsProcessedEvent,
@@ -63,6 +64,13 @@ _FATAL = (
 CHAT_MAX_DELIVER = 5
 
 BUDGET_RETRY_DELAY = 900  # сек, совпадает с паузой в llm.py
+
+# --- бэклог новостей для новых компаний ---
+BACKLOG_CONCURRENCY = 3  # параллельных вызовов LLM
+BACKLOG_REGISTRY_RETRIES = 5  # сколько раз ждём, пока компания появится в реестре
+
+# RAG-индекс готов (или его инициализация упала): после этого можно оценивать новости
+rag_ready = asyncio.Event()
 
 
 async def keepalive(msg, every: float = 10) -> None:
@@ -174,7 +182,34 @@ async def ready_subscribe(js):
     return sub
 
 
+def _find_company(company_id: str):
+    """Ищет компанию в реестре по id (через registry.all(), отдельный get не нужен)."""
+    return next((c for c in registry.all() if c.company_id == company_id), None)
+
+
 # ---------------- новости ----------------
+
+async def _publish_processed(js, news: NewsRawEvent, company, res) -> None:
+    """Публикует результат оценки пары новость x компания (общий для live и бэклога)."""
+    out = NewsProcessedEvent(
+        article_id=news.id,
+        company_id=company.company_id,
+        score=res.score,
+        summary=res.summary,
+        explanation=res.explanation,
+        category=res.category,
+        impact=res.impact,
+        horizon=res.horizon,
+        model=res.model,
+        processed_at=datetime.now(timezone.utc),
+    )
+    await js.publish(
+        subject_for_processed_news(company.company_id, news.id),
+        out.model_dump_json(by_alias=True).encode(),
+        # один результат на пару новость x компания
+        headers={"Nats-Msg-Id": f"{news.id}:{company.company_id}"},
+    )
+
 
 async def handle_news(js, msg) -> None:
     try:
@@ -218,24 +253,7 @@ async def handle_news(js, msg) -> None:
         if res is None:
             continue
 
-        out = NewsProcessedEvent(
-            article_id=news.id,
-            company_id=company.company_id,
-            score=res.score,
-            summary=res.summary,
-            explanation=res.explanation,
-            category=res.category,
-            impact=res.impact,
-            horizon=res.horizon,
-            model=res.model,
-            processed_at=datetime.now(timezone.utc),
-        )
-        await js.publish(
-            subject_for_processed_news(company.company_id, news.id),
-            out.model_dump_json(by_alias=True).encode(),
-            # один результат на пару новость x компания
-            headers={"Nats-Msg-Id": f"{news.id}:{company.company_id}"},
-        )
+        await _publish_processed(js, news, company, res)
         published += 1
 
     # успешные пары уже опубликованы; повторная публикация безопасна:
@@ -250,6 +268,120 @@ async def handle_news(js, msg) -> None:
     await msg.ack()
     log.info("news %s: companies=%d matched=%d", news.id[:8], len(companies), published)
 
+
+async def news_loop(js) -> None:
+    psub = await js.pull_subscribe(
+        NewsFilters.RAW, durable=NewsConsumers.ML_RAW, stream=NEWS_STREAM
+    )
+    log.info("listening %s", NewsFilters.RAW)
+
+    while True:
+        if await _wait_budget():
+            continue
+        try:
+            msgs = await psub.fetch(batch=3, timeout=5)
+        except NatsTimeout:
+            continue
+
+        for msg in msgs:
+            try:
+                await handle_news(js, msg)
+            except BudgetExceeded:
+                log.warning("LLM budget exceeded, news retry in %ds", BUDGET_RETRY_DELAY)
+                await msg.nak(delay=BUDGET_RETRY_DELAY)
+            except _FATAL as e:
+                log.error("news fatal, message dropped: %s: %s", type(e).__name__, e)
+                await msg.term()
+            except Exception:
+                log.exception("news failed, will retry in 30s")
+                await msg.nak(delay=30)
+
+
+async def news_after_rag(js) -> None:
+    """Новости ждут индекс, компании и чат работают сразу."""
+    try:
+        await init_rag()
+    except Exception:
+        log.exception("RAG init failed: новости будут оцениваться без аналитики банка")
+    finally:
+        rag_ready.set()  # разблокируем и бэклог
+    await news_loop(js)
+
+
+# ---------------- новости: бэклог для новых компаний ----------------
+
+async def handle_backlog_news(js, msg, sem: asyncio.Semaphore) -> None:
+    """Архивная новость оценивается только для компании из события."""
+    try:
+        ev = NewsBacklogEvent.model_validate_json(msg.data)
+    except (ValidationError, ValueError) as e:
+        log.warning("bad backlog event on %s: %s", msg.subject, e)
+        await msg.term()
+        return
+
+    company = _find_company(ev.company_id)
+    if company is None:
+        # company.ready ещё не дошёл до реестра через ready_subscribe
+        if msg.metadata.num_delivered >= BACKLOG_REGISTRY_RETRIES:
+            log.warning("backlog: company %s not in registry, dropped", ev.company_id)
+            await msg.term()
+        else:
+            await msg.nak(delay=5)
+        return
+
+    async with sem:
+        res = await score_news(ev, company)
+
+    if res is not None:
+        await _publish_processed(js, ev, company, res)
+    await msg.ack()
+
+
+async def backlog_news_loop(js) -> None:
+    await rag_ready.wait()  # старые новости оцениваем уже с аналитикой банка
+
+    psub = await js.pull_subscribe(
+        NewsFilters.BACKLOG,
+        durable=NewsConsumers.ML_BACKLOG,
+        stream=NEWS_STREAM,
+        config=ConsumerConfig(ack_policy=AckPolicy.EXPLICIT, ack_wait=120),
+    )
+    log.info("listening %s", NewsFilters.BACKLOG)
+    sem = asyncio.Semaphore(BACKLOG_CONCURRENCY)
+
+    while True:
+        if await _wait_budget():
+            continue
+        try:
+            msgs = await psub.fetch(batch=5, timeout=5)
+        except NatsTimeout:
+            continue
+
+        hbs = [asyncio.create_task(keepalive(m)) for m in msgs]
+        try:
+            results = await asyncio.gather(
+                *(handle_backlog_news(js, m, sem) for m in msgs),
+                return_exceptions=True,
+            )
+        finally:
+            for t in hbs:
+                t.cancel()
+
+        for msg, r in zip(msgs, results):
+            if r is None:
+                continue
+            if isinstance(r, BudgetExceeded):
+                log.warning("LLM budget exceeded, backlog retry in %ds", BUDGET_RETRY_DELAY)
+                await msg.nak(delay=BUDGET_RETRY_DELAY)
+            elif isinstance(r, _FATAL):
+                log.error("backlog fatal, dropped: %s: %s", type(r).__name__, r)
+                await msg.term()
+            else:
+                log.error("backlog failed, retry in 30s: %r", r)
+                await msg.nak(delay=30)
+
+
+# ---------------- чат ----------------
 
 async def _respond(js, req: ChatRequestEvent, *, answer=None, error=None, model=None, trace=None) -> None:
     out = ChatResponseEvent(
@@ -326,43 +458,6 @@ async def chat_loop(js) -> None:
                 await msg.nak(delay=10)
 
 
-async def news_loop(js) -> None:
-    psub = await js.pull_subscribe(
-        NewsFilters.RAW, durable=NewsConsumers.ML_RAW, stream=NEWS_STREAM
-    )
-    log.info("listening %s", NewsFilters.RAW)
-
-    while True:
-        if await _wait_budget():
-            continue
-        try:
-            msgs = await psub.fetch(batch=3, timeout=5)
-        except NatsTimeout:
-            continue
-
-        for msg in msgs:
-            try:
-                await handle_news(js, msg)
-            except BudgetExceeded:
-                log.warning("LLM budget exceeded, news retry in %ds", BUDGET_RETRY_DELAY)
-                await msg.nak(delay=BUDGET_RETRY_DELAY)
-            except _FATAL as e:
-                log.error("news fatal, message dropped: %s: %s", type(e).__name__, e)
-                await msg.term()
-            except Exception:
-                log.exception("news failed, will retry in 30s")
-                await msg.nak(delay=30)
-
-
-async def news_after_rag(js) -> None:
-    """Новости ждут индекс, компании и чат работают сразу."""
-    try:
-        await init_rag()
-    except Exception:
-        log.exception("RAG init failed: новости будут оцениваться без аналитики банка")
-    await news_loop(js)
-
-
 # ---------------- запуск ----------------
 
 async def main() -> None:
@@ -372,7 +467,12 @@ async def main() -> None:
     try:
         await ready_subscribe(js)
         await asyncio.sleep(2)  # дать снимку компаний загрузиться до первых новостей
-        await asyncio.gather(enrich_loop(js), news_after_rag(js), chat_loop(js))
+        await asyncio.gather(
+            enrich_loop(js),
+            news_after_rag(js),
+            chat_loop(js),
+            backlog_news_loop(js),
+        )
     finally:
         await nc.drain()
 
