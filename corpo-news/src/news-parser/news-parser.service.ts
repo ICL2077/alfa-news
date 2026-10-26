@@ -23,7 +23,9 @@ export class NewsParserService {
     private outbox: OutboxService,
   ) {}
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron(CronExpression.EVERY_5_MINUTES, {
+    disabled: process.env.NEWS_IMPORT_ENABLED === 'false',
+  })
   async fetchAndStore() {
     const xml = await this.fetchXml(API_RSS_URL);
     const articles = this.parseRbcXml(xml);

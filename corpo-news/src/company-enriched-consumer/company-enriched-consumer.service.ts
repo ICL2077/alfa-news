@@ -65,6 +65,7 @@ export class CompanyEnrichedConsumerService
 
     try {
       await this.prisma.$transaction(async (trans) => {
+        await trans.$queryRaw`SELECT id FROM "companies" WHERE id = ${event.companyId} FOR UPDATE`;
         // статус до обновления: бэклог нужен только при первом переходе в READY
         const prev = await trans.company.findUniqueOrThrow({
           where: { id: event.companyId },

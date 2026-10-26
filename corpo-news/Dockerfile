@@ -1,11 +1,11 @@
 # ============================
 # Stage 1: Builder
 # ============================
-FROM node:20-alpine AS builder
+FROM git.birlab.ru/actions/base-images/node:22-alpine@sha256:fa1fb405a117ff1b1155dee7a493348d785e25de19794f4d474452884f874d7b AS builder
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@10 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.8 --activate
 
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma
@@ -23,11 +23,11 @@ RUN pnpm prune --prod
 # ============================
 # Stage 2: Runtime
 # ============================
-FROM node:20-alpine AS runtime
+FROM git.birlab.ru/actions/base-images/node:22-alpine@sha256:fa1fb405a117ff1b1155dee7a493348d785e25de19794f4d474452884f874d7b AS runtime
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@10 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.8 --activate
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist

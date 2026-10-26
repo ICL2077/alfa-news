@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     nats_url: str = "nats://localhost:4222"
 
     # LLM
-    llm_mode: str = "stub"  # stub | llm
+    llm_mode: Literal["stub", "llm"] = "stub"  # stub | llm
     llm_base_url: str = "https://changellenge.up.railway.app/v1"
     llm_api_key: str = ""
     llm_enrich_model: str = "qwen/qwen3.6-35b-a3b"
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     ocr_backend: Literal["vlm", "easyocr"] = "vlm"
     llm_ocr_model: str = "qwen/qwen3-vl-30b-a3b-instruct"
     ocr_dpi: int = 150
+    ocr_concurrency: int = Field(2, ge=1, le=4)
     ocr_max_tokens: int = 3000
     rag_top_k: int = 3
     rag_max_chars: int = 2400

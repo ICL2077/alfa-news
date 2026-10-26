@@ -90,9 +90,11 @@ async def _create(**kwargs):
     if budget_pause_left() > 0:
         raise BudgetExceeded("LLM budget paused")
 
-    await _pace()
     try:
         async with _sem:
+            if budget_pause_left() > 0:
+                raise BudgetExceeded("LLM budget paused")
+            await _pace()
             return await _client.chat.completions.create(**kwargs)
     except (BadRequestError, RateLimitError, PermissionDeniedError) as e:
         if "budget" in str(e).lower():
@@ -186,6 +188,8 @@ async def ask_text(messages: list[dict], model: str, max_tokens: int, usage: dic
     resp = await _create(**kwargs)
     _log_usage(model, resp)
     _fill_usage(usage, resp)
+    if resp.choices[0].finish_reason == "length":
+        raise AnswerTruncated(f"{model}: answer cut at max_tokens={max_tokens}")
     return _THINK.sub("", resp.choices[0].message.content or "").strip()
 
 @retry(
@@ -213,4 +217,6 @@ async def ask_vision(image_png: bytes, instruction: str, model: str, max_tokens:
         timeout=settings.llm_timeout,
     )
     _log_usage(model, resp)
+    if resp.choices[0].finish_reason == "length":
+        raise AnswerTruncated(f"{model}: OCR cut at max_tokens={max_tokens}")
     return _THINK.sub("", resp.choices[0].message.content or "").strip()

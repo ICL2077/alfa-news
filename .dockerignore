@@ -11,3 +11,11 @@ deploy/credentials.local
 deploy/provider-probe.env
 deploy/smoke.env
 **/*.pyc
+**/.agents
+**/.claude
+**/.windsurf
+**/.codex
+**/skills-lock.json
+**/AGENTS.md
+**/CLAUDE.md
+**/GEMINI.md

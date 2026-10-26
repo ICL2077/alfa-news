@@ -1,0 +1,13 @@
+{
+    admin off
+}
+:80 {
+    handle_path /api/* {
+        reverse_proxy backend:3000
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

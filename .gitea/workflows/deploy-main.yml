@@ -1,68 +1,84 @@
 name: Build and deploy demo
 
 on:
-  push:
-    branches: [main]
+    push:
+        branches: [main, 'fix/**']
+    pull_request:
+        branches: [main]
 
 concurrency:
-  group: corpo-news-main-deploy
-  cancel-in-progress: false
+    group: corpo-news-${{ github.ref }}
+    cancel-in-progress: false
 
 jobs:
-  build-and-push:
-    runs-on: birlab-laptop
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
+    build-and-push:
+        runs-on: birlab-laptop
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Login to Gitea Registry
-        env:
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.birlab.ru -u "$REGISTRY_USER" --password-stdin
+            - name: Login to Gitea Registry
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+                  REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+              run: printf '%s' "$REGISTRY_TOKEN" | docker login git.birlab.ru -u "$REGISTRY_USER" --password-stdin
 
-      - name: Build and push application images
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-          PUBLIC_HOST: build.invalid
-          POSTGRES_PASSWORD: build-only
-          BASIC_AUTH_USER: build-only
-          BASIC_AUTH_HASH: build-only
-          LLM_API_KEY: build-only
-        run: |
-          docker compose -f deploy/docker-compose.yml build backend ml-service proxy
-          docker compose -f deploy/docker-compose.yml push backend ml-service proxy
+            - name: Verify and build application images
+              env:
+                  IMAGE_TAG: ${{ github.sha }}
+                  PUBLIC_HOST: build.invalid
+                  POSTGRES_PASSWORD: build-only
+                  BASIC_AUTH_USER: build-only
+                  BASIC_AUTH_HASH: build-only
+                  LLM_API_KEY: build-only
+              run: |
+                  docker compose -f deploy/docker-compose.yml config --quiet
+                  docker compose -f deploy/docker-compose.yml build backend ml-service proxy
+                  docker run --rm --entrypoint python git.birlab.ru/birlab/corpo-news-hackaton/ml-service:"$IMAGE_TAG" -m compileall -q app contract
 
-  deploy:
-    runs-on: birlab-server
-    needs: [build-and-push]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
+            - name: Publish application images
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  IMAGE_TAG: ${{ github.sha }}
+                  PUBLIC_HOST: build.invalid
+                  POSTGRES_PASSWORD: build-only
+                  BASIC_AUTH_USER: build-only
+                  BASIC_AUTH_HASH: build-only
+                  LLM_API_KEY: build-only
+              run: docker compose -f deploy/docker-compose.yml push backend ml-service proxy
 
-      - name: Pull and restart the demo on srv
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        run: |
-          set -euo pipefail
-          cat deploy/docker-compose.yml | docker run --rm -i \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /opt/corpo-news:/opt/corpo-news \
-            -e IMAGE_TAG -e REGISTRY_USER -e REGISTRY_TOKEN \
-            docker.gitea.com/runner-images:ubuntu-latest bash -lc '
-              set -euo pipefail
-              printf "%s" "$REGISTRY_TOKEN" | docker login git.birlab.ru -u "$REGISTRY_USER" --password-stdin
-              cat > /tmp/docker-compose.yml
-              compose() {
-                # Preserve the existing corpo-news-demo_* database and NATS volumes on srv.
-                docker compose -p corpo-news-demo \
-                  --project-directory /opt/corpo-news/deploy \
-                  --env-file /opt/corpo-news/deploy/.env \
-                  -f /tmp/docker-compose.yml "$@"
-              }
-              compose pull backend ml-service proxy
-              compose up -d --no-build --pull never --wait --wait-timeout 180 backend ml-service proxy
-              compose ps
-            '
+    deploy:
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: birlab-server
+        needs: [build-and-push]
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Pull and restart the demo on srv
+              env:
+                  IMAGE_TAG: ${{ github.sha }}
+                  REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+                  REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  cat deploy/docker-compose.yml | docker run --rm -i \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v /opt/corpo-news:/opt/corpo-news \
+                    -e IMAGE_TAG -e REGISTRY_USER -e REGISTRY_TOKEN \
+                    docker.gitea.com/runner-images:ubuntu-latest bash -lc '
+                      set -euo pipefail
+                      printf "%s" "$REGISTRY_TOKEN" | docker login git.birlab.ru -u "$REGISTRY_USER" --password-stdin
+                      cat > /tmp/docker-compose.yml
+                      compose() {
+                        # Preserve the existing corpo-news-demo_* database and NATS volumes on srv.
+                        docker compose -p corpo-news-demo \
+                          --project-directory /opt/corpo-news/deploy \
+                          --env-file /opt/corpo-news/deploy/.env \
+                          -f /tmp/docker-compose.yml "$@"
+                      }
+                      compose pull backend ml-service proxy
+                      compose up -d --no-deps --no-build --pull never --wait --wait-timeout 180 backend ml-service proxy
+                      compose ps
+                    '

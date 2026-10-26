@@ -26,6 +26,9 @@ export class CreateCompanyDto {
   @MaxLength(5000)
   description?: string;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
   @IsOptional()
   @IsString()
   @MaxLength(64)

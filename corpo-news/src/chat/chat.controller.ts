@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Sse } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Sse,
+  MessageEvent,
+} from '@nestjs/common';
 import { MessageDto } from './dto/message.dto';
 import { ChatService } from './chat.service';
 import { ChatEventsService } from './chat-events.service';
@@ -27,7 +35,8 @@ export class ChatController {
   }
 
   @Sse(':id/events')
-  stream(@Param('id') id: string) {
+  async stream(@Param('id') id: string) {
+    await this.chatService.ensureChatExists(id);
     const ping = interval(25_000).pipe(
       map(() => ({ type: 'ping', data: '' }) as MessageEvent),
     );

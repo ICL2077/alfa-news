@@ -8,7 +8,7 @@ import { useNews } from './components/Insights/useNews';
 import { Login } from './components/Login/login';
 import { ProfilePage } from './components/ProfilePage/profile-page';
 import { useThread } from './components/Thread/useThread';
-import type { Employee } from './types';
+import type { Company, Employee } from './types';
 
 const KEY = 'companyId';
 const readId = () => {
@@ -31,17 +31,6 @@ export default function App() {
         refetchInterval: (query) => (query.state.data?.status === 'DRAFT' ? 3000 : false),
     });
     const company = companyQuery.data;
-    const employee: Employee | undefined = company
-        ? {
-              id: company.id,
-              username: company.name,
-              companyId: company.id,
-              role: null,
-              interests: [],
-          }
-        : undefined;
-    const news = useNews(employee);
-    const chat = useThread(company?.id ?? '');
 
     useEffect(() => {
         if (companyQuery.isError) {
@@ -74,13 +63,44 @@ export default function App() {
     };
 
     if (!companyId || companyQuery.isError) return <Login onLogin={login} />;
-    if (companyQuery.isPending || !company || !employee)
+    if (companyQuery.isPending || !company)
         return (
             <p className="muted" style={{ padding: '2rem' }}>
                 Загружаем компанию…
             </p>
         );
 
+    return (
+        <CompanySession
+            key={company.id}
+            company={company}
+            view={view}
+            setView={setView}
+            logout={logout}
+        />
+    );
+}
+
+function CompanySession({
+    company,
+    view,
+    setView,
+    logout,
+}: {
+    company: Company;
+    view: View;
+    setView: (view: View) => void;
+    logout: () => void;
+}) {
+    const employee: Employee = {
+        id: company.id,
+        username: company.name,
+        companyId: company.id,
+        role: null,
+        interests: [],
+    };
+    const news = useNews(employee);
+    const chat = useThread(company?.id ?? '');
     return (
         <div className="app-layout">
             {view !== 'home' && (

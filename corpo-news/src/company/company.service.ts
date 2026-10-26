@@ -48,7 +48,9 @@ export class CompanyService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('Компания с таким ИНН уже существует');
+        throw new ConflictException(
+          'Компания с таким ИНН или ID клиента банка уже существует',
+        );
       }
       throw error;
     }

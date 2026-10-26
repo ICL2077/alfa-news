@@ -90,6 +90,10 @@ model ArticleMatch {
   impact  String?
   horizon String?
 
+  actions       String[] @default([])
+  alfaView      String?  @db.Text
+  sources       Json?
+
   agentRun AgentRun?
 
   chat Chat? // на тему новости можно вступить в диалог с ии

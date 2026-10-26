@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -166,8 +167,8 @@ def _geography(uid: str) -> dict | None:
     if not path.exists():
         return None
     stat = path.stat()
-    stamp = f"{stat.st_mtime_ns}:{stat.st_size}"
-    cache = _abs(settings.bank_cache_dir) / f"geo_{re.sub(r'[^\\w-]', '_', uid)}.json"
+    stamp = f"v2:{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+    cache = _abs(settings.bank_cache_dir) / f"geo_{hashlib.sha256(uid.encode()).hexdigest()}.json"
     if cache.exists():
         c = json.loads(cache.read_text(encoding="utf-8"))
         if c.get("stamp") == stamp:
@@ -241,8 +242,12 @@ def _counterparties(uid: str) -> dict | None:
     if not path.exists():
         return None
     stat = path.stat()
-    stamp = f"{stat.st_mtime_ns}:{stat.st_size}"
-    cache = _abs(settings.bank_cache_dir) / f"pay_{re.sub(r'[^\\w-]', '_', uid)}.json"
+    stamp = f"v2:{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+    profile_path = _file(settings.bank_uid_file)
+    if profile_path.exists():
+        profile_stat = profile_path.stat()
+        stamp += f":{profile_path.resolve()}:{profile_stat.st_mtime_ns}:{profile_stat.st_size}"
+    cache = _abs(settings.bank_cache_dir) / f"pay_{hashlib.sha256(uid.encode()).hexdigest()}.json"
     if cache.exists():
         c = json.loads(cache.read_text(encoding="utf-8"))
         if c.get("stamp") == stamp:

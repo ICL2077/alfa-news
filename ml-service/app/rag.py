@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -43,6 +44,7 @@ class Hit:
 
 _chunks: list[Chunk] = []
 _bm25: BM25Okapi | None = None
+_corpus_complete = False
 
 
 def _path(p: str) -> Path:
@@ -92,47 +94,63 @@ async def _extract_pdf(pdf: Path) -> tuple[dict[str, str], bool]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / f"{pdf.stem}.json"
 
+    extraction = hashlib.sha256(
+        f"{settings.ocr_backend}:{settings.llm_ocr_model}:{settings.ocr_dpi}:{settings.ocr_max_tokens}:{OCR_PROMPT}".encode()
+    ).hexdigest()
     pages: dict[str, str] = {}
     if cache_file.exists():
         cached = json.loads(cache_file.read_text(encoding="utf-8"))
         # кэш действителен, пока не изменился файл и способ распознавания
-        if cached.get("sha") == sha and cached.get("backend") == settings.ocr_backend:
+        if cached.get("sha") == sha and cached.get("extraction") == extraction:
             pages = cached.get("pages", {})
 
     def save() -> None:
         tmp = cache_file.with_suffix(".tmp")
-        payload = {"sha": sha, "backend": settings.ocr_backend, "pages": pages}
+        payload = {"sha": sha, "backend": settings.ocr_backend, "extraction": extraction, "pages": pages}
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cache_file)
 
     complete = True
     ocr_calls = 0
+    started = time.monotonic()
+    stop = asyncio.Event()
     doc = fitz.open(pdf)
-    try:
-        total = doc.page_count
-        for i, page in enumerate(doc, start=1):
-            if str(i) in pages:
-                continue
+    total = doc.page_count
+    remaining = iter(i for i in range(1, total + 1) if str(i) not in pages)
 
-            text = page.get_text().strip()  # сначала текстовый слой, он бесплатный
+    async def extract_remaining() -> None:
+        nonlocal complete, ocr_calls
+        while not stop.is_set():
+            i = next(remaining, None)
+            if i is None:
+                return
+            page_started = time.monotonic()
+            page = doc[i - 1]
+            text = page.get_text().strip()
             if len(text) < MIN_TEXT_LAYER:
                 try:
-                    text = await _ocr_page(page)
                     ocr_calls += 1
+                    text = await _ocr_page(page)
                 except BudgetExceeded:
-                    log.error("%s: бюджет LLM исчерпан на стр. %d, остальное после сброса", pdf.name, i)
+                    log.error("%s: бюджет LLM исчерпан на стр. %d", pdf.name, i)
                     complete = False
-                    break
+                    stop.set()
+                    return
                 except Exception:
-                    log.exception("%s: OCR стр. %d не удался, пропускаю", pdf.name, i)
+                    log.exception("%s: OCR стр. %d не удался, страница не кэшируется", pdf.name, i)
+                    complete = False
                     continue
-
             pages[str(i)] = text
-            save()  # сохраняем после каждой страницы: сбой или бюджет не сожгут уже сделанное
+            save()
+            log.info("%s: стр. %d готова за %.1f сек", pdf.name, i, time.monotonic() - page_started)
+
+    try:
+        await asyncio.gather(*(extract_remaining() for _ in range(settings.ocr_concurrency)))
     finally:
         doc.close()
 
-    log.info("%s: страниц=%d, с текстом=%d, вызовов OCR=%d", pdf.name, total, len(pages), ocr_calls)
+    log.info("%s: страниц=%d, с текстом=%d, вызовов OCR=%d, время=%.1f сек",
+             pdf.name, total, len(pages), ocr_calls, time.monotonic() - started)
     return pages, complete
 
 
@@ -161,7 +179,8 @@ def _split(source: str, page: int, text: str) -> list[Chunk]:
 
 async def init_rag() -> None:
     """Читает кэш (при необходимости делает OCR) и строит индекс BM25."""
-    global _chunks, _bm25
+    global _chunks, _bm25, _corpus_complete
+    _corpus_complete = False
 
     if not settings.rag_enabled:
         log.info("RAG отключён (RAG_ENABLED=false)")
@@ -173,19 +192,21 @@ async def init_rag() -> None:
         return
 
     chunks: list[Chunk] = []
+    corpus_complete = True
     for pdf in pdfs:
         pages, complete = await _extract_pdf(pdf)
         for num, text in sorted(pages.items(), key=lambda kv: int(kv[0])):
             chunks.extend(_split(pdf.stem, int(num), text))
         if not complete:
+            corpus_complete = False
             log.warning("RAG: индекс неполный, часть страниц не распознана")
-            break
 
     tokenized = [_tokens(c.text) for c in chunks]
     if not any(tokenized):
         log.warning("RAG: после обработки нет текста для индекса")
         return
 
+    _corpus_complete = corpus_complete
     _chunks = chunks
     _bm25 = BM25Okapi(tokenized)
     _retrieve.cache_clear()
@@ -200,6 +221,7 @@ class Retrieval:
     hits: tuple[Hit, ...]        # фрагменты, попавшие в промпт
     best_score: float            # лучший балл (даже если он ниже порога)
     context: str                 # текст для промпта
+    complete: bool = False       # все страницы корпуса успешно извлечены
 
 
 @lru_cache(maxsize=512)
@@ -210,7 +232,7 @@ def _retrieve(query: str) -> Retrieval:
     top = debug_top(query, settings.rag_top_k)
     best = top[0].score if top else 0.0
     if not top or best < settings.rag_min_score:
-        return Retrieval(True, (), best, "")  # слабое совпадение: лучше без контекста, чем с шумом
+        return Retrieval(True, (), best, "", _corpus_complete)  # слабое совпадение: лучше без контекста, чем с шумом
 
     used: list[Hit] = []
     parts: list[str] = []
@@ -224,7 +246,7 @@ def _retrieve(query: str) -> Retrieval:
         used.append(h)
         parts.append(block)
         total += len(block)
-    return Retrieval(True, tuple(used), best, "\n\n".join(parts))
+    return Retrieval(True, tuple(used), best, "\n\n".join(parts), _corpus_complete)
 
 
 def retrieve(query: str) -> Retrieval:

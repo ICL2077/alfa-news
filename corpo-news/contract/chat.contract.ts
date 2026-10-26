@@ -40,6 +40,9 @@ export interface ChatRequestEvent {
       horizon: string | null;
       summary: string | null;
       explanation: string | null;
+      actions?: string[];
+      alfaView?: string | null;
+      sources?: unknown;
     };
   };
   requestedAt: string; // ISO, UTC

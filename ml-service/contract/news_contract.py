@@ -81,12 +81,15 @@ class NewsProcessedEvent(_Event):
 
     article_id: str = Field(..., alias="articleId")
     company_id: str = Field(..., alias="companyId")
-    score: float  # 0..1
+    score: float = Field(ge=0, le=1, allow_inf_nan=False)  # 0..1
     summary: str
     explanation: str
     category: Optional[str] = None
     model: Optional[str] = None
     trace: Optional[AgentTrace] = None
+    actions: list[str] = Field(default_factory=list)
+    alfa_view: str = Field("", alias="alfaView")
+    sources: list[dict] = Field(default_factory=list)
     processed_at: datetime = Field(..., alias="processedAt")
     impact: Optional[str] = None
     horizon: Optional[str] = None

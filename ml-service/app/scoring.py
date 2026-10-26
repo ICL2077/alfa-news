@@ -2,7 +2,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from . import bank_data
 
@@ -59,9 +59,10 @@ _SYSTEM = """Ты старший аналитик: готовишь для ру�
 - actions: 1-3 конкретных действия или вопроса для клиента (что проверить, к чему готовиться);
 - alfa_view: 1-2 предложения с позицией Альфа-Банка из <bank_analytics>, если в выдержке
   есть прямое отношение к новости; иначе пустая строка;
-- sources: список объектов {"type": "news"|"bank"|"alfa", "ref": "..."}, где
+- sources: список объектов {"type": "news"|"bank"|"alfa", "ref": "...", "quote": "..."}, где
   "news" — фраза из новости, "bank" — название поля профиля (например "products",
-  "ftsCountries", "counterparties.paid"), "alfa" — источник и страница из <bank_analytics>.
+  "ftsCountries", "counterparties.paid"), "alfa" — точная подпись источник и страница из <bank_analytics> без квадратных скобок;
+  для alfa обязательно quote: дословный фрагмент, подтверждающий позицию банка.
 
 Как писать explanation:
 1. Не пересказывай новость, факт уже в summary. Начинай сразу со смысла события.
@@ -108,7 +109,7 @@ SYSTEM = _SYSTEM.replace("__CATEGORIES__", ", ".join(CATEGORIES))
 
 class ScoreResult(BaseModel):
     relevant: bool
-    score: float = 0.0
+    score: float = Field(0.0, allow_inf_nan=False)
     category: str = "другое"
     impact: str = "neutral"
     horizon: str = "medium"
@@ -152,7 +153,7 @@ class ScoreResult(BaseModel):
         out = []
         for item in v:
             if isinstance(item, dict) and item.get("type") and item.get("ref"):
-                out.append({"type": str(item["type"]), "ref": str(item["ref"])})
+                out.append({"type": str(item["type"]), "ref": str(item["ref"]), "quote": str(item.get("quote", ""))})
         return out
 
 
@@ -357,7 +358,7 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
             trace=trace.build(),
         )
 
-    query = " ".join([news.title, news.description or "", *[t for t, _ in signals]])
+    query = " ".join([news.title, company.profile_json.get("industry", "") if company.profile_json else "", *[t for t, _ in signals], news.description or ""])
     with trace.step("rag_search", "Поиск в аналитике Альфа-Банка") as s:
         try:
             r = rag.retrieve(query)
@@ -368,6 +369,8 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         else:
             s.detail.update(
                 query=query[:200],
+                indexReady=r.ready,
+                corpusComplete=r.complete,
                 threshold=settings.rag_min_score,
                 bestScore=round(r.best_score, 1),
                 used=[
@@ -395,7 +398,7 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         f"Совпавшие ключевые слова: {', '.join(hits) or 'нет'}\n"
         "</signals>\n"
         f"{bank_block}"
-        f"<news>\nЗаголовок: {news.title}\n"
+        f"<news>\nДата новости: {news.pub_date.isoformat()}\nЗаголовок: {news.title}\n"
         f"Текст: {text[: settings.news_text_limit]}\n</news>"
     )
 
@@ -403,6 +406,27 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
     with trace.step("llm_call", "Анализ новости моделью") as s:
         result = await ask_json(SYSTEM, user, ScoreResult, settings.llm_score_model, usage=usage)  # type: ignore[arg-type]
         s.detail.update(model=settings.llm_score_model, **usage)
+
+    sources = [{"type": "news", "ref": news.title, "url": news.link}]
+    for source in result.sources:
+        if source["type"] != "alfa":
+            continue
+        ref = source["ref"].strip().strip("[]")
+        quote = source.get("quote", "").strip()
+        for hit in r.hits:
+            expected = f"{hit.chunk.source}, стр. {hit.chunk.page}"
+            if ref == expected:
+                # Resolve references against retrieved data rather than displaying
+                # a paraphrase as a quote. Keep the actual source excerpt if needed.
+                excerpt = quote if len(quote) >= 20 and quote in hit.chunk.text else hit.chunk.text
+                sources.append({"type": "alfa", "ref": expected,
+                                "page": hit.chunk.page, "quote": excerpt})
+                break
+    # Only verbatim retrieved evidence may be displayed as the bank's position.
+    # The model's personalized interpretation belongs in explanation/actions.
+    result.alfa_view = "\n\n".join(
+        dict.fromkeys(source["quote"] for source in sources if source["type"] == "alfa")
+    )
 
     keep = result.relevant and result.score >= settings.score_threshold
     with trace.step("decision", "Решение: показывать ли новость клиенту") as s:
@@ -437,6 +461,6 @@ async def score_news(news: NewsRawEvent, company: CompanyReadyEvent) -> Match | 
         model=settings.llm_score_model,
         actions=result.actions,
         alfa_view=result.alfa_view.strip(),
-        sources=result.sources,
+        sources=sources,
         trace=trace.build(),
     )
