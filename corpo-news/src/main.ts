@@ -3,6 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 
+import { setupOpenApi } from './openapi/setup';
+
 const PORT = process.env.PORT ?? 3000;
 
 async function bootstrap() {
@@ -17,6 +19,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  setupOpenApi(app);
 
   await app.listen(PORT, () => {
     console.log(`le application is now running on http://localhost:${PORT}`);
