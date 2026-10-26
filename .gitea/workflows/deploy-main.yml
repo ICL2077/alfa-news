@@ -56,29 +56,18 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Pull and restart the demo on srv
+            - name: Обновить стенд через Dokploy
               env:
                   IMAGE_TAG: ${{ github.sha }}
-                  REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-                  REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
               run: |
                   set -euo pipefail
-                  cat deploy/docker-compose.yml | docker run --rm -i \
+                  tar -C deploy -cf - dokploy-deploy.py docker-compose.yml | docker run --rm -i \
                     -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v /opt/corpo-news:/opt/corpo-news \
-                    -e IMAGE_TAG -e REGISTRY_USER -e REGISTRY_TOKEN \
+                    -v /opt/corpo-news:/opt/corpo-news:ro \
+                    -e IMAGE_TAG \
                     docker.gitea.com/runner-images:ubuntu-latest bash -lc '
                       set -euo pipefail
-                      printf "%s" "$REGISTRY_TOKEN" | docker login git.birlab.ru -u "$REGISTRY_USER" --password-stdin
-                      cat > /tmp/docker-compose.yml
-                      compose() {
-                        # Preserve the existing corpo-news-demo_* database and NATS volumes on srv.
-                        docker compose -p corpo-news-demo \
-                          --project-directory /opt/corpo-news/deploy \
-                          --env-file /opt/corpo-news/deploy/.env \
-                          -f /tmp/docker-compose.yml "$@"
-                      }
-                      compose pull backend ml-service proxy
-                      compose up -d --no-deps --no-build --pull never --wait --wait-timeout 180 backend ml-service proxy
-                      compose ps
+                      mkdir -p /tmp/corpo-news-deploy
+                      tar -xf - -C /tmp/corpo-news-deploy
+                      python3 /tmp/corpo-news-deploy/dokploy-deploy.py
                     '
